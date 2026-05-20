@@ -71,6 +71,10 @@ def dev_login(
     if not settings.DEV_LOGIN:
         raise HTTPException(status_code=404, detail="dev login disabled")
     user = get_or_create_user(db, discord_id=discord_id, username=username)
+    # DEV 로그인 사용자는 자동 admin (로컬/내부망 개발용)
+    if not user.is_admin:
+        user.is_admin = True
+        db.commit()
     _set_session(response, user.id)
     return {
         "ok": True,

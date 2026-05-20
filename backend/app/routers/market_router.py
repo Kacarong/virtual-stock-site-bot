@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from ..auth import admin_required
+from ..auth import admin_required, current_user
 from ..db import get_db
 from ..models import Price, Symbol, User
 from ..services.market_calendar import is_market_open, next_open
@@ -117,7 +117,7 @@ async def manual_sync(_admin: User = Depends(admin_required)) -> dict:
 
 
 @router.get("/debug")
-async def debug(_admin: User = Depends(admin_required), db: Session = Depends(get_db)) -> dict:
+async def debug(_user: User = Depends(current_user), db: Session = Depends(get_db)) -> dict:
     """진단: 외부 소스 / DB 상태."""
     import asyncio as _asyncio
 
