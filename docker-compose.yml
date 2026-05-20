@@ -1,0 +1,52 @@
+services:
+  api:
+    build: ./backend
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    env_file: .env
+    environment:
+      - PYTHONUNBUFFERED=1
+    ports:
+      - "${API_PORT:-8000}:8000"
+    volumes:
+      - ./backend:/app
+      - ./data:/data
+    restart: unless-stopped
+
+  worker:
+    build: ./backend
+    command: python -m app.worker
+    env_file: .env
+    environment:
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./backend:/app
+      - ./data:/data
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  # Stage 5 에서 활성화
+  # bot:
+  #   build: ./backend
+  #   command: python -m app.bot
+  #   env_file: .env
+  #   volumes:
+  #     - ./backend:/app
+  #     - ./data:/data
+  #   depends_on:
+  #     - api
+  #   restart: unless-stopped
+
+  web:
+    build: ./web
+    command: npm run dev
+    env_file: .env
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    volumes:
+      - ./web:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      - api
+    restart: unless-stopped
