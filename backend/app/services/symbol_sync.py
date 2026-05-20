@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from ..db import SessionLocal
 from ..models import Symbol
 from .sources import kis, upbit
+from .sources.us_seeds import US_SEEDS
 
 
 def _upsert_symbol(db: Session, row: dict) -> None:
@@ -76,10 +77,34 @@ async def sync_krx() -> int:
         db.close()
 
 
+async def sync_us() -> int:
+    """미국 주식/ETF — yfinance에 전종목 API가 없어 시드 목록을 upsert."""
+    db = SessionLocal()
+    try:
+        for code, name, market, asset_type in US_SEEDS:
+            _upsert_symbol(
+                db,
+                {
+                    "code": code,
+                    "name": name,
+                    "market": market,
+                    "asset_type": asset_type,
+                    "currency": "USD",
+                    "sector": None,
+                },
+            )
+        db.commit()
+        return len(US_SEEDS)
+    finally:
+        db.close()
+
+
 async def sync_all() -> dict:
     """매일 새벽에 실행되는 잡."""
     n_upbit = await sync_upbit()
     logger.info("symbol sync: UPBIT={}", n_upbit)
     n_krx = await sync_krx()
     logger.info("symbol sync: KRX={}", n_krx)
-    return {"upbit": n_upbit, "krx": n_krx}
+    n_us = await sync_us()
+    logger.info("symbol sync: US={}", n_us)
+    return {"upbit": n_upbit, "krx": n_krx, "us": n_us}

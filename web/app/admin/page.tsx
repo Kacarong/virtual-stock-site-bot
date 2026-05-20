@@ -45,7 +45,7 @@ export default function Admin() {
     setMsg("동기화 시작…");
     try {
       const r = await api<any>("/market/symbols/sync", { method: "POST" });
-      setMsg(`동기화 완료: UPBIT=${r.upbit} KRX=${r.krx}`);
+      setMsg(`동기화 완료: UPBIT=${r.upbit} KRX=${r.krx} US=${r.us ?? 0}`);
     } catch (e: any) {
       setMsg(e.message);
     }
