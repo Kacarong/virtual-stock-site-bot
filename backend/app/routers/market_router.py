@@ -114,3 +114,79 @@ async def popular(
 @router.post("/symbols/sync")
 async def manual_sync(_admin: User = Depends(admin_required)) -> dict:
     return await sync_all()
+
+
+@router.get("/debug")
+async def debug(_admin: User = Depends(admin_required), db: Session = Depends(get_db)) -> dict:
+    """진단: 외부 소스 / DB 상태."""
+    import asyncio as _asyncio
+
+    out: dict = {}
+
+    # Symbol DB
+    out["symbol_count"] = {
+        m: db.query(Symbol).filter(Symbol.market == m).count()
+        for m in ("KRX", "NASDAQ", "NYSE", "UPBIT")
+    }
+    out["sample_krx"] = [
+        {"code": s.code, "name": s.name}
+        for s in db.query(Symbol).filter(Symbol.market == "KRX").limit(5).all()
+    ]
+
+    # pykrx 상태
+    def _check_pykrx() -> dict:
+        try:
+            from datetime import datetime, timedelta
+
+            from pykrx import stock  # type: ignore
+
+            res: dict = {"installed": True}
+            today = datetime.now()
+            for d in range(0, 7):
+                date = (today - timedelta(days=d)).strftime("%Y%m%d")
+                try:
+                    df = stock.get_market_ohlcv_by_ticker(date=date, market="ALL")
+                    if df is not None and len(df) > 0:
+                        res["sample_date"] = date
+                        res["rows"] = len(df)
+                        return res
+                except Exception as e:
+                    res.setdefault("errors", []).append(f"{date}: {e}")
+            res["empty"] = True
+            return res
+        except Exception as e:
+            return {"installed": False, "error": str(e)}
+
+    out["pykrx"] = await _asyncio.wait_for(_asyncio.to_thread(_check_pykrx), timeout=30)
+
+    # yfinance 상태
+    def _check_yf() -> dict:
+        try:
+            import yfinance as yf  # type: ignore
+
+            t = yf.Ticker("AAPL")
+            fi = t.fast_info
+            return {
+                "installed": True,
+                "AAPL_price": float(fi.last_price or 0),
+                "AAPL_prev": float(fi.previous_close or 0),
+            }
+        except Exception as e:
+            return {"installed": False, "error": str(e)}
+
+    out["yfinance"] = await _asyncio.wait_for(_asyncio.to_thread(_check_yf), timeout=20)
+
+    # KIS 상태
+    from ..services.sources import kis as _kis
+
+    out["kis"] = {
+        "configured": _kis._configured(),
+        "env": _kis.settings.KIS_ENV if _kis._configured() else None,
+    }
+    if _kis._configured():
+        tok = await _kis.get_access_token()
+        out["kis"]["token_ok"] = bool(tok)
+        sample = await _kis.fetch_price("005930")
+        out["kis"]["samsung_quote"] = {k: str(v) for k, v in sample.items()} if sample else None
+
+    return out

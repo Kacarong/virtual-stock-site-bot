@@ -4,7 +4,6 @@ import { useEffect, useRef } from "react";
 import {
   createChart,
   ColorType,
-  CandlestickSeries,
   IChartApi,
 } from "lightweight-charts";
 
@@ -37,7 +36,7 @@ export function Chart({ data }: { data: Candle[] }) {
       timeScale: { borderVisible: false, timeVisible: true },
     });
     chartRef.current = chart;
-    const series = chart.addSeries(CandlestickSeries, {
+    const series = chart.addCandlestickSeries({
       upColor: "#FF4D4D",
       downColor: "#3182F6",
       wickUpColor: "#FF4D4D",

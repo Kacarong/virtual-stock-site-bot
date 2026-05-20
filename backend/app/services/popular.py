@@ -17,7 +17,9 @@ from sqlalchemy.orm import Session
 
 from ..db import SessionLocal
 from ..models import Symbol
+from .sources import kis as _kis
 from .sources import upbit
+from .sources.kr_seeds import KR_SEEDS
 from .sources.us_seeds import US_SEEDS
 
 Sort = Literal["value", "volume", "change"]
@@ -120,53 +122,97 @@ async def popular_krx(sort: Sort, limit: int = 30) -> list[dict]:
     if (c := _cached(key)) is not None:
         return c[:limit]
 
-    def _fetch() -> list[dict]:
-        try:
-            from datetime import datetime, timedelta
-            from pykrx import stock  # type: ignore
+    lock = _lock_for("KRX")
+    if lock.locked():
+        for s in ("value", "volume", "change"):
+            stale = _cache.get(("KRX", s))
+            if stale:
+                return _sort_rows(list(stale[1]), sort)[:limit]
+        return []
 
-            # 가장 가까운 영업일 (오늘 데이터 없으면 -1, -2...)
-            today = datetime.now()
-            df = None
-            for d in range(0, 7):
-                date = (today - timedelta(days=d)).strftime("%Y%m%d")
-                try:
-                    df = stock.get_market_ohlcv_by_ticker(date=date, market="ALL")
-                    if df is not None and len(df) > 0:
-                        break
-                except Exception:
-                    continue
-            if df is None or len(df) == 0:
+    async with lock:
+        if (c := _cached(("KRX", sort))) is not None:
+            return c[:limit]
+
+        def _fetch() -> list[dict]:
+            try:
+                from datetime import datetime, timedelta
+                from pykrx import stock  # type: ignore
+
+                today = datetime.now()
+                df = None
+                for d in range(0, 7):
+                    date = (today - timedelta(days=d)).strftime("%Y%m%d")
+                    try:
+                        df = stock.get_market_ohlcv_by_ticker(date=date, market="ALL")
+                        if df is not None and len(df) > 0:
+                            logger.info("KRX popular: pykrx date={} rows={}", date, len(df))
+                            break
+                    except Exception as e:
+                        logger.debug("pykrx ohlcv try {} fail: {}", date, e)
+                        continue
+                if df is None or len(df) == 0:
+                    logger.warning("KRX popular: pykrx returned empty")
+                    return []
+                df = df.reset_index().rename(
+                    columns={
+                        "티커": "code",
+                        "종가": "price",
+                        "거래량": "volume",
+                        "거래대금": "value",
+                        "등락률": "change_pct",
+                    }
+                )
+                return df[["code", "price", "volume", "value", "change_pct"]].to_dict("records")
+            except Exception as e:
+                logger.warning("KRX popular fetch failed: {}", e)
                 return []
-            # 컬럼: 시가/고가/저가/종가/거래량/거래대금/등락률
-            df = df.reset_index().rename(
-                columns={
-                    "티커": "code",
-                    "종가": "price",
-                    "거래량": "volume",
-                    "거래대금": "value",
-                    "등락률": "change_pct",
-                }
-            )
-            return df[["code", "price", "volume", "value", "change_pct"]].to_dict("records")
-        except Exception as e:
-            logger.warning("KRX popular fetch failed: {}", e)
-            return []
 
-    rows = await asyncio.to_thread(_fetch)
+        try:
+            rows = await asyncio.wait_for(asyncio.to_thread(_fetch), timeout=25.0)
+        except asyncio.TimeoutError:
+            logger.warning("KRX popular fetch timeout")
+            rows = []
 
-    # 이름 붙이기
+        # pykrx 실패 시: KIS API로 시드 상위 30개 quote 받아서 채움 (거래량/대금은 0)
+        if not rows:
+            logger.info("KRX popular fallback: using seeds + KIS quote")
+            seed_codes = [c for c, _, asset_type, _ in KR_SEEDS if asset_type == "STOCK"][:30]
+            quotes = await _kis.fetch_prices(seed_codes)
+            rows = []
+            for code in seed_codes:
+                q = quotes.get(code)
+                if not q:
+                    continue
+                price = float(q["price"])
+                prev = float(q.get("prev_close") or price) or price
+                change_pct = ((price - prev) / prev * 100) if prev else 0.0
+                rows.append(
+                    {
+                        "code": code,
+                        "price": price,
+                        "volume": 0.0,
+                        "value": 0.0,
+                        "change_pct": change_pct,
+                    }
+                )
+
+    # 이름 붙이기 (Symbol DB 우선, 없으면 KR_SEEDS, 마지막엔 code 그대로)
     db = SessionLocal()
     try:
         name_by = {s.code: s.name for s in db.query(Symbol).filter(Symbol.market == "KRX").all()}
     finally:
         db.close()
+    seed_name = {code: name for code, name, _, _ in KR_SEEDS}
 
     out = []
     for r in rows:
         code = str(r["code"])
-        if code not in name_by:
-            continue  # 마스터에 없는 종목 스킵
+        name = name_by.get(code) or seed_name.get(code)
+        if not name:
+            continue
+        # 매핑용으로 임시 추가 (다음 줄에서 사용)
+        name_by[code] = name
         out.append(
             {
                 "market": "KRX",
@@ -224,44 +270,41 @@ async def popular_us(sort: Sort, limit: int = 30) -> list[dict]:
 
         def _fetch() -> list[dict]:
             try:
+                import concurrent.futures
+
                 import yfinance as yf  # type: ignore
 
                 codes = US_POPULAR_CODES
                 name_by = {c: n for c, n, _, _ in US_SEEDS}
                 market_by = {c: m for c, _, m, _ in US_SEEDS}
-                data = yf.download(
-                    tickers=" ".join(codes),
-                    period="2d",
-                    interval="1d",
-                    group_by="ticker",
-                    threads=True,
-                    progress=False,
-                )
-                out: list[dict] = []
-                for code in codes:
+
+                def one(code: str) -> dict | None:
                     try:
-                        d = data[code] if len(codes) > 1 else data
-                        if d is None or len(d) == 0:
-                            continue
-                        last = d.iloc[-1]
-                        prev = d.iloc[-2] if len(d) >= 2 else last
-                        price = float(last["Close"])
-                        prev_close = float(prev["Close"]) or price
-                        volume = float(last["Volume"])
-                        change_pct = ((price - prev_close) / prev_close * 100) if prev_close else 0.0
-                        out.append(
-                            {
-                                "market": market_by.get(code, "NASDAQ"),
-                                "code": code,
-                                "name": name_by.get(code, code),
-                                "price": price,
-                                "change_pct": change_pct,
-                                "volume": volume,
-                                "value": price * volume,
-                            }
-                        )
+                        t = yf.Ticker(code)
+                        fi = t.fast_info
+                        price = float(fi.last_price or 0)
+                        prev = float(fi.previous_close or 0) or price
+                        volume = float(getattr(fi, "last_volume", 0) or 0)
+                        if not price:
+                            return None
+                        change_pct = ((price - prev) / prev * 100) if prev else 0.0
+                        return {
+                            "market": market_by.get(code, "NASDAQ"),
+                            "code": code,
+                            "name": name_by.get(code, code),
+                            "price": price,
+                            "change_pct": change_pct,
+                            "volume": volume,
+                            "value": price * volume,
+                        }
                     except Exception:
-                        continue
+                        return None
+
+                out: list[dict] = []
+                with concurrent.futures.ThreadPoolExecutor(max_workers=20) as ex:
+                    for r in ex.map(one, codes, timeout=18):
+                        if r:
+                            out.append(r)
                 return out
             except Exception as e:
                 logger.warning("US popular fetch failed: {}", e)
@@ -272,6 +315,25 @@ async def popular_us(sort: Sort, limit: int = 30) -> list[dict]:
         except asyncio.TimeoutError:
             logger.warning("US popular fetch timeout")
             out = []
+
+        # yfinance 전부 실패 시: 시드만 표시(가격 0). 최소한 "데이터 없음"은 피함.
+        if not out:
+            logger.warning("US popular all-failed, returning seed placeholders")
+            for code in US_POPULAR_CODES:
+                meta = next((x for x in US_SEEDS if x[0] == code), None)
+                if not meta:
+                    continue
+                out.append(
+                    {
+                        "market": meta[2],
+                        "code": code,
+                        "name": meta[1],
+                        "price": 0.0,
+                        "change_pct": 0.0,
+                        "volume": 0.0,
+                        "value": 0.0,
+                    }
+                )
 
         _store(("US", sort), _sort_rows(list(out), sort))
         # 다른 정렬도 같은 데이터로 미리 캐시
