@@ -16,6 +16,7 @@ from ..db import get_db
 from ..models import Price, Symbol, User
 from ..services.market_calendar import is_market_open, next_open
 from ..services.history import get_history
+from ..services.popular import popular as popular_svc
 from ..services.quotes import get_quote
 from ..services.symbol_sync import sync_all
 
@@ -94,6 +95,20 @@ async def history(market: str, code: str, interval: str = "1d") -> list[dict]:
     if interval not in ("1d", "1h", "5m"):
         raise HTTPException(400, "interval must be 1d/1h/5m")
     return await get_history(market.upper(), code, interval)  # type: ignore
+
+
+@router.get("/popular")
+async def popular(
+    market: str = Query(..., pattern="^(KRX|US|UPBIT)$"),
+    sort: str = Query("value", pattern="^(value|volume|change)$"),
+    limit: int = Query(30, ge=1, le=100),
+) -> list[dict]:
+    """시장별 인기종목.
+
+    - market: KRX(국내) / US(해외) / UPBIT(코인)
+    - sort:   value(거래대금) / volume(거래량) / change(등락률)
+    """
+    return await popular_svc(market, sort, limit)  # type: ignore
 
 
 @router.post("/symbols/sync")

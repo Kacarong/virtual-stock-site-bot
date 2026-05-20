@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from ..db import SessionLocal
 from ..models import Symbol
 from .sources import kis, upbit
+from .sources.kr_seeds import KR_SEEDS
 from .sources.us_seeds import US_SEEDS
 
 
@@ -62,10 +63,33 @@ async def sync_upbit() -> int:
         db.close()
 
 
+async def sync_krx_seeds() -> int:
+    """KRX 인기 시드(150개) 우선 upsert — pykrx 실패해도 검색은 즉시 동작."""
+    db = SessionLocal()
+    try:
+        for code, name, asset_type, sector in KR_SEEDS:
+            _upsert_symbol(
+                db,
+                {
+                    "code": code,
+                    "name": name,
+                    "market": "KRX",
+                    "asset_type": asset_type,
+                    "currency": "KRW",
+                    "sector": sector,
+                },
+            )
+        db.commit()
+        return len(KR_SEEDS)
+    finally:
+        db.close()
+
+
 async def sync_krx() -> int:
+    """pykrx로 전종목 확장 (느리고 실패 가능 — 시드는 별도 보장)."""
     rows = await kis.fetch_symbol_master_krx()
     if not rows:
-        logger.warning("KRX symbol master empty — pykrx 미설치/네트워크 실패 가능")
+        logger.warning("KRX 전종목 동기화 실패 — pykrx 미설치/네트워크 실패 (시드는 정상)")
         return 0
     db = SessionLocal()
     try:
@@ -100,11 +124,20 @@ async def sync_us() -> int:
 
 
 async def sync_all() -> dict:
-    """매일 새벽에 실행되는 잡."""
+    """매일 새벽에 실행되는 잡.
+
+    순서: 빠르고 확실한 것 먼저(시드/공개 API), 느린 pykrx는 마지막.
+    """
     n_upbit = await sync_upbit()
     logger.info("symbol sync: UPBIT={}", n_upbit)
-    n_krx = await sync_krx()
-    logger.info("symbol sync: KRX={}", n_krx)
+    n_kr_seed = await sync_krx_seeds()
+    logger.info("symbol sync: KR_SEEDS={}", n_kr_seed)
     n_us = await sync_us()
     logger.info("symbol sync: US={}", n_us)
-    return {"upbit": n_upbit, "krx": n_krx, "us": n_us}
+    try:
+        n_krx = await sync_krx()
+        logger.info("symbol sync: KRX(pykrx)={}", n_krx)
+    except Exception as e:
+        logger.warning("KRX pykrx sync failed (시드는 유효): {}", e)
+        n_krx = 0
+    return {"upbit": n_upbit, "kr_seeds": n_kr_seed, "us": n_us, "krx": n_krx}

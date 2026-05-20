@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import useSWR from "swr";
+import { PopularBoard } from "@/components/PopularBoard";
 import { SearchBox } from "@/components/SearchBox";
 import { api, fmtKRW, fmtNum, fmtUSD, pctClass } from "@/lib/api";
 
@@ -80,6 +81,9 @@ export default function Home() {
           <p className="mt-1 text-xs text-ink-3">USD/KRW {fmtNum(data.usdkrw, 1)}</p>
         </div>
       </div>
+
+      {/* 실시간 인기 */}
+      <PopularBoard />
 
       {/* 보유 종목 */}
       <div className="rounded-3xl bg-white shadow-sm">

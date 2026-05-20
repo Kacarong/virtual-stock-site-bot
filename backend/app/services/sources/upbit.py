@@ -24,6 +24,22 @@ async def fetch_markets() -> list[dict]:
     return [m for m in all_mk if m["market"].startswith("KRW-")]
 
 
+async def fetch_tickers_full(codes: list[str]) -> list[dict]:
+    """원시 ticker 행 반환 — 거래대금 등 부가정보 포함."""
+    if not codes:
+        return []
+    out: list[dict] = []
+    CHUNK = 100
+    async with httpx.AsyncClient(timeout=10) as c:
+        for i in range(0, len(codes), CHUNK):
+            chunk = codes[i : i + CHUNK]
+            r = await c.get(f"{BASE}/v1/ticker", params={"markets": ",".join(chunk)})
+            if r.status_code != 200:
+                continue
+            out.extend(r.json())
+    return out
+
+
 async def fetch_prices(codes: list[str]) -> dict[str, dict]:
     """{code: {price, prev_close}}.
 
