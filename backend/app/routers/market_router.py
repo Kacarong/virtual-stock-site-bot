@@ -15,6 +15,7 @@ from ..auth import admin_required
 from ..db import get_db
 from ..models import Price, Symbol, User
 from ..services.market_calendar import is_market_open, next_open
+from ..services.history import get_history
 from ..services.quotes import get_quote
 from ..services.symbol_sync import sync_all
 
@@ -86,6 +87,13 @@ def status() -> dict:
             "next_open": next_open(m).isoformat() if m != "UPBIT" else None,
         }
     return out
+
+
+@router.get("/history/{market}/{code}")
+async def history(market: str, code: str, interval: str = "1d") -> list[dict]:
+    if interval not in ("1d", "1h", "5m"):
+        raise HTTPException(400, "interval must be 1d/1h/5m")
+    return await get_history(market.upper(), code, interval)  # type: ignore
 
 
 @router.post("/symbols/sync")
