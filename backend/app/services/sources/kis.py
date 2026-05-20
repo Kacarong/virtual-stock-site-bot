@@ -89,10 +89,16 @@ async def fetch_price(code: str) -> dict | None:
             o = r.json().get("output", {})
             if not o:
                 return None
-            return {
+            out: dict = {
                 "price": Decimal(o["stck_prpr"]),  # 주식 현재가
                 "prev_close": Decimal(o.get("stck_sdpr") or o["stck_prpr"]),  # 전일종가
             }
+            try:
+                out["volume"] = Decimal(o.get("acml_vol") or 0)  # 누적거래량
+                out["value"] = Decimal(o.get("acml_tr_pbmn") or 0)  # 누적거래대금
+            except Exception:
+                pass
+            return out
     except Exception as e:
         logger.debug("KIS price fetch failed for {}: {}", code, e)
         return None

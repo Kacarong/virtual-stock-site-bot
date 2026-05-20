@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from ..db import SessionLocal
 from ..models import Symbol
 from .sources import kis as _kis
+from .sources import stooq as _stooq
 from .sources import upbit
 from .sources.kr_seeds import KR_SEEDS
 from .sources.us_seeds import US_SEEDS
@@ -174,7 +175,7 @@ async def popular_krx(sort: Sort, limit: int = 30) -> list[dict]:
             logger.warning("KRX popular fetch timeout")
             rows = []
 
-        # pykrx 실패 시: KIS API로 시드 상위 30개 quote 받아서 채움 (거래량/대금은 0)
+        # pykrx 실패 시: KIS API로 시드 상위 30개 quote 받아서 채움 (KIS도 volume/value 제공)
         if not rows:
             logger.info("KRX popular fallback: using seeds + KIS quote")
             seed_codes = [c for c, _, asset_type, _ in KR_SEEDS if asset_type == "STOCK"][:30]
@@ -186,13 +187,15 @@ async def popular_krx(sort: Sort, limit: int = 30) -> list[dict]:
                     continue
                 price = float(q["price"])
                 prev = float(q.get("prev_close") or price) or price
+                volume = float(q.get("volume") or 0)
+                value = float(q.get("value") or 0)
                 change_pct = ((price - prev) / prev * 100) if prev else 0.0
                 rows.append(
                     {
                         "code": code,
                         "price": price,
-                        "volume": 0.0,
-                        "value": 0.0,
+                        "volume": volume,
+                        "value": value,
                         "change_pct": change_pct,
                     }
                 )
@@ -268,53 +271,84 @@ async def popular_us(sort: Sort, limit: int = 30) -> list[dict]:
         if (c := _cached(("US", sort))) is not None:
             return c[:limit]
 
-        def _fetch() -> list[dict]:
-            try:
-                import concurrent.futures
+        codes = US_POPULAR_CODES
+        name_by = {c: n for c, n, _, _ in US_SEEDS}
+        market_by = {c: m for c, _, m, _ in US_SEEDS}
 
-                import yfinance as yf  # type: ignore
+        # 1순위: Stooq (빠르고 NAS에서 잘 됨)
+        quotes = await _stooq.fetch_quotes(codes)
+        out: list[dict] = []
+        for code in codes:
+            q = quotes.get(code)
+            if not q:
+                continue
+            price = float(q["price"])
+            open_ = float(q.get("prev_close") or price) or price
+            volume = float(q.get("volume") or 0)
+            change_pct = ((price - open_) / open_ * 100) if open_ else 0.0
+            out.append(
+                {
+                    "market": market_by.get(code, "NASDAQ"),
+                    "code": code,
+                    "name": name_by.get(code, code),
+                    "price": price,
+                    "change_pct": change_pct,
+                    "volume": volume,
+                    "value": price * volume,
+                }
+            )
 
-                codes = US_POPULAR_CODES
-                name_by = {c: n for c, n, _, _ in US_SEEDS}
-                market_by = {c: m for c, _, m, _ in US_SEEDS}
+        # 2순위(스토크 0건이면): yfinance.history per-ticker 병렬
+        if not out:
+            logger.info("US popular: stooq empty, falling back to yfinance.history")
 
-                def one(code: str) -> dict | None:
-                    try:
-                        t = yf.Ticker(code)
-                        fi = t.fast_info
-                        price = float(fi.last_price or 0)
-                        prev = float(fi.previous_close or 0) or price
-                        volume = float(getattr(fi, "last_volume", 0) or 0)
-                        if not price:
+            def _yf_fetch() -> list[dict]:
+                try:
+                    import concurrent.futures
+
+                    import yfinance as yf  # type: ignore
+
+                    def one(code: str) -> dict | None:
+                        try:
+                            t = yf.Ticker(code)
+                            hist = t.history(period="5d", auto_adjust=False)
+                            if hist.empty:
+                                return None
+                            last = hist.iloc[-1]
+                            prev = hist.iloc[-2] if len(hist) >= 2 else last
+                            price = float(last["Close"])
+                            prev_close = float(prev["Close"]) or price
+                            volume = float(last["Volume"])
+                            change_pct = (
+                                (price - prev_close) / prev_close * 100
+                            ) if prev_close else 0.0
+                            return {
+                                "market": market_by.get(code, "NASDAQ"),
+                                "code": code,
+                                "name": name_by.get(code, code),
+                                "price": price,
+                                "change_pct": change_pct,
+                                "volume": volume,
+                                "value": price * volume,
+                            }
+                        except Exception:
                             return None
-                        change_pct = ((price - prev) / prev * 100) if prev else 0.0
-                        return {
-                            "market": market_by.get(code, "NASDAQ"),
-                            "code": code,
-                            "name": name_by.get(code, code),
-                            "price": price,
-                            "change_pct": change_pct,
-                            "volume": volume,
-                            "value": price * volume,
-                        }
-                    except Exception:
-                        return None
 
-                out: list[dict] = []
-                with concurrent.futures.ThreadPoolExecutor(max_workers=20) as ex:
-                    for r in ex.map(one, codes, timeout=18):
-                        if r:
-                            out.append(r)
-                return out
-            except Exception as e:
-                logger.warning("US popular fetch failed: {}", e)
-                return []
+                    res: list[dict] = []
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as ex:
+                        for r in ex.map(one, codes, timeout=25):
+                            if r:
+                                res.append(r)
+                    return res
+                except Exception as e:
+                    logger.warning("yfinance fallback failed: {}", e)
+                    return []
 
-        try:
-            out = await asyncio.wait_for(asyncio.to_thread(_fetch), timeout=20.0)
-        except asyncio.TimeoutError:
-            logger.warning("US popular fetch timeout")
-            out = []
+            try:
+                out = await asyncio.wait_for(asyncio.to_thread(_yf_fetch), timeout=28.0)
+            except asyncio.TimeoutError:
+                logger.warning("yfinance fallback timeout")
+                out = []
 
         # yfinance 전부 실패 시: 시드만 표시(가격 0). 최소한 "데이터 없음"은 피함.
         if not out:
