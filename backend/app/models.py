@@ -5,7 +5,6 @@ from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import (
-    BigInteger,
     Boolean,
     DateTime,
     ForeignKey,
@@ -158,7 +157,7 @@ class CashLedger(Base):
 
     __tablename__ = "cash_ledger"
 
-    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     currency: Mapped[str] = mapped_column(String(8))  # KRW / USD
     amount: Mapped[Decimal] = mapped_column(MONEY)  # 양수=입금, 음수=출금
