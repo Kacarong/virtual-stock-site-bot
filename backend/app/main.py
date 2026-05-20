@@ -7,7 +7,15 @@ from loguru import logger
 
 from .config import settings
 from .db import init_db
-from .routers import auth_router, health_router, market_router, watchlist_router
+from .routers import (
+    admin_router,
+    auth_router,
+    health_router,
+    market_router,
+    orders_router,
+    portfolio_router,
+    watchlist_router,
+)
 
 app = FastAPI(title="papertrade API", version="0.1.0")
 
@@ -23,6 +31,9 @@ app.include_router(health_router.router)
 app.include_router(auth_router.router)
 app.include_router(market_router.router)
 app.include_router(watchlist_router.router)
+app.include_router(orders_router.router)
+app.include_router(portfolio_router.router)
+app.include_router(admin_router.router)
 
 
 @app.on_event("startup")
