@@ -26,6 +26,29 @@ Market = Literal["KRX", "US", "UPBIT"]
 _cache: dict[tuple[str, str], tuple[float, list[dict]]] = {}
 _TTL = {"UPBIT": 10.0, "KRX": 60.0, "US": 60.0}
 
+# 동시 호출 시 중복 fetch 방지용 in-flight 락 (느린 KRX/US용)
+_inflight: dict[str, asyncio.Lock] = {}
+
+
+def _lock_for(market: str) -> asyncio.Lock:
+    lk = _inflight.get(market)
+    if lk is None:
+        lk = asyncio.Lock()
+        _inflight[market] = lk
+    return lk
+
+
+# popular US용 인기 50개 (전체 시드 130개 중 시총 상위)
+US_POPULAR_CODES = [
+    "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", "AVGO", "ORCL", "CRM",
+    "AMD", "NFLX", "ADBE", "INTC", "QCOM", "CSCO", "PLTR", "UBER", "SHOP", "ABNB",
+    "JPM", "V", "MA", "BAC", "WFC", "GS", "BRK-B", "BLK", "COIN",
+    "WMT", "COST", "HD", "NKE", "SBUX", "MCD", "DIS", "KO",
+    "LLY", "UNH", "JNJ", "ABBV", "XOM", "CVX",
+    "BABA", "TSM", "ASML", "SMCI", "MSTR",
+    "SPY", "QQQ", "VOO", "IBIT",
+]
+
 
 def _cached(key: tuple[str, str]) -> list[dict] | None:
     hit = _cache.get(key)
@@ -169,68 +192,93 @@ async def popular_krx(sort: Sort, limit: int = 30) -> list[dict]:
 
 # ------------------------------------------------------------------ US
 
-async def popular_us(sort: Sort, limit: int = 30) -> list[dict]:
-    key = ("US", sort)
-    if (c := _cached(key)) is not None:
-        return c[:limit]
-
-    def _fetch() -> list[dict]:
-        try:
-            import yfinance as yf  # type: ignore
-
-            codes = [c for c, _, _, _ in US_SEEDS]
-            market_by = {c: m for c, _, m, _ in US_SEEDS}
-            # 한 번에 다운로드 (1d, prepost=False)
-            data = yf.download(
-                tickers=" ".join(codes),
-                period="2d",
-                interval="1d",
-                group_by="ticker",
-                threads=True,
-                progress=False,
-            )
-            out: list[dict] = []
-            name_by = {c: n for c, n, _, _ in US_SEEDS}
-            for code in codes:
-                try:
-                    d = data[code] if len(codes) > 1 else data
-                    if d is None or len(d) == 0:
-                        continue
-                    last = d.iloc[-1]
-                    prev = d.iloc[-2] if len(d) >= 2 else last
-                    price = float(last["Close"])
-                    prev_close = float(prev["Close"]) or price
-                    volume = float(last["Volume"])
-                    change_pct = ((price - prev_close) / prev_close * 100) if prev_close else 0.0
-                    out.append(
-                        {
-                            "market": market_by[code],
-                            "code": code,
-                            "name": name_by[code],
-                            "price": price,
-                            "change_pct": change_pct,
-                            "volume": volume,
-                            "value": price * volume,
-                        }
-                    )
-                except Exception:
-                    continue
-            return out
-        except Exception as e:
-            logger.warning("US popular fetch failed: {}", e)
-            return []
-
-    out = await asyncio.to_thread(_fetch)
-
+def _sort_rows(rows: list[dict], sort: Sort) -> list[dict]:
     if sort == "value":
-        out.sort(key=lambda x: x["value"], reverse=True)
+        rows.sort(key=lambda x: x["value"], reverse=True)
     elif sort == "volume":
-        out.sort(key=lambda x: x["volume"], reverse=True)
+        rows.sort(key=lambda x: x["volume"], reverse=True)
     else:
-        out.sort(key=lambda x: x["change_pct"], reverse=True)
+        rows.sort(key=lambda x: x["change_pct"], reverse=True)
+    return rows
 
-    _store(key, out)
-    return out[:limit]
+
+async def popular_us(sort: Sort, limit: int = 30) -> list[dict]:
+    # 캐시 적중 시 즉시 반환
+    for s in ("value", "volume", "change"):
+        if (c := _cached(("US", s))) is not None and s == sort:
+            return c[:limit]
+
+    lock = _lock_for("US")
+    # 락이 잠겨 있으면 기존 캐시(만료라도) 반환 — 무한 로딩 방지
+    if lock.locked():
+        for s in ("value", "volume", "change"):
+            stale = _cache.get(("US", s))
+            if stale:
+                return _sort_rows(list(stale[1]), sort)[:limit]
+        return []
+
+    async with lock:
+        # 락 진입 후 한 번 더 확인 (다른 호출이 방금 채웠을 수 있음)
+        if (c := _cached(("US", sort))) is not None:
+            return c[:limit]
+
+        def _fetch() -> list[dict]:
+            try:
+                import yfinance as yf  # type: ignore
+
+                codes = US_POPULAR_CODES
+                name_by = {c: n for c, n, _, _ in US_SEEDS}
+                market_by = {c: m for c, _, m, _ in US_SEEDS}
+                data = yf.download(
+                    tickers=" ".join(codes),
+                    period="2d",
+                    interval="1d",
+                    group_by="ticker",
+                    threads=True,
+                    progress=False,
+                )
+                out: list[dict] = []
+                for code in codes:
+                    try:
+                        d = data[code] if len(codes) > 1 else data
+                        if d is None or len(d) == 0:
+                            continue
+                        last = d.iloc[-1]
+                        prev = d.iloc[-2] if len(d) >= 2 else last
+                        price = float(last["Close"])
+                        prev_close = float(prev["Close"]) or price
+                        volume = float(last["Volume"])
+                        change_pct = ((price - prev_close) / prev_close * 100) if prev_close else 0.0
+                        out.append(
+                            {
+                                "market": market_by.get(code, "NASDAQ"),
+                                "code": code,
+                                "name": name_by.get(code, code),
+                                "price": price,
+                                "change_pct": change_pct,
+                                "volume": volume,
+                                "value": price * volume,
+                            }
+                        )
+                    except Exception:
+                        continue
+                return out
+            except Exception as e:
+                logger.warning("US popular fetch failed: {}", e)
+                return []
+
+        try:
+            out = await asyncio.wait_for(asyncio.to_thread(_fetch), timeout=20.0)
+        except asyncio.TimeoutError:
+            logger.warning("US popular fetch timeout")
+            out = []
+
+        _store(("US", sort), _sort_rows(list(out), sort))
+        # 다른 정렬도 같은 데이터로 미리 캐시
+        for s in ("value", "volume", "change"):
+            if s != sort:
+                _store(("US", s), _sort_rows(list(out), s))  # type: ignore
+        return _sort_rows(out, sort)[:limit]
 
 
 # ------------------------------------------------------------------ dispatcher

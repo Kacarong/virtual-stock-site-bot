@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { Chart } from "@/components/Chart";
 import { api, fmtNum, pctClass } from "@/lib/api";
@@ -26,9 +26,10 @@ const fetcher = (u: string) => api(u);
 export default function SymbolPage({
   params,
 }: {
-  params: Promise<{ market: string; code: string }>;
+  params: { market: string; code: string };
 }) {
-  const { market, code } = use(params);
+  const { market, code: rawCode } = params;
+  const code = decodeURIComponent(rawCode);
 
   const { data: q } = useSWR<Quote>(`/market/quote/${market}/${code}`, fetcher, {
     refreshInterval: 3000,

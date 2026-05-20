@@ -98,6 +98,40 @@ async def fetch_price(code: str) -> dict | None:
         return None
 
 
+async def fetch_price_pykrx(code: str) -> dict | None:
+    """KIS 실패 시 pykrx로 최근 영업일 종가 fallback."""
+    def _fetch() -> dict | None:
+        try:
+            from datetime import datetime, timedelta
+            from pykrx import stock  # type: ignore
+
+            today = datetime.now()
+            for d in range(0, 10):
+                date = (today - timedelta(days=d)).strftime("%Y%m%d")
+                try:
+                    df = stock.get_market_ohlcv(date, date, code)
+                    if df is not None and len(df) > 0:
+                        last = df.iloc[-1]
+                        close = Decimal(str(int(last["종가"])))
+                        # 전일 종가
+                        prev = close
+                        try:
+                            date2 = (today - timedelta(days=d + 7)).strftime("%Y%m%d")
+                            df2 = stock.get_market_ohlcv(date2, date, code)
+                            if df2 is not None and len(df2) >= 2:
+                                prev = Decimal(str(int(df2.iloc[-2]["종가"])))
+                        except Exception:
+                            pass
+                        return {"price": close, "prev_close": prev}
+                except Exception:
+                    continue
+        except Exception as e:
+            logger.debug("pykrx fallback failed for {}: {}", code, e)
+        return None
+
+    return await asyncio.to_thread(_fetch)
+
+
 async def fetch_prices(codes: list[str]) -> dict[str, dict]:
     """다수 코드. KIS는 단건 API라 동시성 제어해서 순회."""
     sem = asyncio.Semaphore(2)  # 모의 초당 2건 한도

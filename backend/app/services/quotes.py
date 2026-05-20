@@ -30,7 +30,11 @@ async def fetch_one(market: str, code: str) -> dict | None:
         m = await upbit.fetch_prices([code])
         return m.get(code)
     if market == "KRX":
-        return await kis.fetch_price(code)
+        q = await kis.fetch_price(code)
+        if q:
+            return q
+        # 장마감/실패 시 pykrx 종가 fallback
+        return await kis.fetch_price_pykrx(code)
     if market in ("NASDAQ", "NYSE"):
         return await yfinance_src.fetch_quote(code)
     return None
