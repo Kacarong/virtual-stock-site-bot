@@ -98,12 +98,35 @@ async def quote(market: str, code: str, db: Session = Depends(get_db)) -> dict:
         .filter(Symbol.market == mkt, Symbol.code == code)
         .first()
     )
+
+    # 시드 한글명 가져오기
+    seed_name = _seed_name(mkt, code)
+
+    # DB에 없으면 시드로 즉시 등록 (사용자가 매수 못 하는 일 방지)
+    if not sym and seed_name:
+        from ..services.sources.us_seeds import US_SEEDS
+        from ..services.sources.kr_seeds import KR_SEEDS
+        meta_us = next((x for x in US_SEEDS if x[0] == code), None)
+        meta_kr = next((x for x in KR_SEEDS if x[0] == code), None)
+        if meta_us:
+            _, name, m, asset_type = meta_us
+            sym = Symbol(code=code, name=name, market=m, asset_type=asset_type, currency="USD", is_active=True)
+        elif meta_kr:
+            _, name, asset_type, sector = meta_kr
+            sym = Symbol(code=code, name=name, market="KRX", asset_type=asset_type, currency="KRW", sector=sector, is_active=True)
+        if sym:
+            db.add(sym)
+            try:
+                db.commit()
+                db.refresh(sym)
+            except Exception:
+                db.rollback()
+                sym = None
+
     db_price = db.get(Price, sym.id) if sym else None
 
-    # 시드 한글명: DB 이름이 영어이거나 코드와 같으면 시드 이름으로 덮어쓰기
-    seed_name = _seed_name(mkt, code)
+    # 이름 자가복구
     if sym and seed_name and sym.name != seed_name:
-        # DB 이름이 시드와 다르면 즉시 업데이트 (재배포 후 첫 호출 시 보정)
         sym.name = seed_name
         try:
             db.commit()
@@ -125,6 +148,8 @@ async def quote(market: str, code: str, db: Session = Depends(get_db)) -> dict:
             "market": mkt,
             "code": code,
             "name": display_name,
+            "symbol_id": sym.id if sym else None,
+            "currency": sym.currency if sym else ("USD" if mkt in ("NASDAQ", "NYSE", "AMEX") else "KRW"),
             "price": str(db_price.price),
             "prev_close": str(db_price.prev_close) if db_price.prev_close else None,
             "source": "db_fresh",
@@ -142,6 +167,8 @@ async def quote(market: str, code: str, db: Session = Depends(get_db)) -> dict:
         "market": mkt,
         "code": code,
         "name": display_name,
+        "symbol_id": sym.id if sym else None,
+        "currency": sym.currency if sym else ("USD" if mkt in ("NASDAQ", "NYSE", "AMEX") else "KRW"),
         "price": str(price),
         "prev_close": str(prev) if prev else None,
         "source": "ondemand" if q else "db_stale",

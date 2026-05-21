@@ -200,11 +200,60 @@ async def popular_krx(sort: Sort, limit: int = 30) -> list[dict]:
             logger.warning("KRX popular fetch timeout")
             rows = []
 
-        # pykrx 실패 시: KIS API로 시드 전체 quote 받아서 채움 (KIS도 volume/value 제공)
+        # pykrx 실패 시: KIS → yfinance 순으로 시드 quote 채움
         if not rows:
             logger.info("KRX popular fallback: using seeds + KIS quote")
             seed_codes = [c for c, _, asset_type, _ in KR_SEEDS if asset_type == "STOCK"]
             quotes = await _kis.fetch_prices(seed_codes)
+
+            # KIS 미설정/실패 시 yfinance 폴백 (.KS 접미)
+            missing = [c for c in seed_codes if not quotes.get(c)]
+            if missing:
+                logger.info("KRX popular: yfinance fallback for {} codes", len(missing))
+
+                def _yf_kr(targets: list[str]) -> dict[str, dict]:
+                    try:
+                        import concurrent.futures
+                        import yfinance as yf  # type: ignore
+
+                        def one(c: str):
+                            try:
+                                t = yf.Ticker(f"{c}.KS")
+                                hist = t.history(period="5d", auto_adjust=False)
+                                if hist.empty:
+                                    return c, None
+                                last = hist.iloc[-1]
+                                prev = hist.iloc[-2] if len(hist) >= 2 else last
+                                price = float(last["Close"])
+                                pclose = float(prev["Close"]) or price
+                                vol = float(last["Volume"])
+                                return c, {
+                                    "price": price,
+                                    "prev_close": pclose,
+                                    "volume": vol,
+                                    "value": price * vol,
+                                }
+                            except Exception:
+                                return c, None
+
+                        out: dict[str, dict] = {}
+                        with concurrent.futures.ThreadPoolExecutor(max_workers=15) as ex:
+                            for c, q in ex.map(one, targets, timeout=25):
+                                if q:
+                                    out[c] = q
+                        return out
+                    except Exception as e:
+                        logger.warning("KRX yf fallback failed: {}", e)
+                        return {}
+
+                try:
+                    yf_quotes = await asyncio.wait_for(
+                        asyncio.to_thread(_yf_kr, missing), timeout=28.0
+                    )
+                    quotes.update(yf_quotes)
+                except asyncio.TimeoutError:
+                    logger.warning("KRX yf fallback timeout")
+
             rows = []
             for code in seed_codes:
                 q = quotes.get(code)
@@ -213,7 +262,7 @@ async def popular_krx(sort: Sort, limit: int = 30) -> list[dict]:
                 price = float(q["price"])
                 prev = float(q.get("prev_close") or price) or price
                 volume = float(q.get("volume") or 0)
-                value = float(q.get("value") or 0)
+                value = float(q.get("value") or 0) or price * volume
                 change_pct = ((price - prev) / prev * 100) if prev else 0.0
                 rows.append(
                     {

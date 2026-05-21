@@ -9,6 +9,8 @@ type Quote = {
   market: string;
   code: string;
   name: string;
+  symbol_id: number | null;
+  currency: string;
   price: string;
   prev_close: string | null;
 };
@@ -77,6 +79,16 @@ export default function SymbolPage({
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
+  // 미국주식 원화 보기 토글
+  const isUS = market === "NASDAQ" || market === "NYSE" || market === "AMEX";
+  const [showKrw, setShowKrw] = useState(false);
+  const { data: fx } = useSWR<{ usdkrw: string }>(
+    isUS ? "/portfolio" : null,
+    fetcher,
+    { refreshInterval: 60000 }
+  );
+  const rate = fx?.usdkrw ? Number(fx.usdkrw) : null;
+
   useEffect(() => {
     if (q?.price && !limitPrice) setLimitPrice(q.price);
   }, [q?.price]);
@@ -89,13 +101,15 @@ export default function SymbolPage({
   async function submit() {
     setMsg(null);
     setErr(null);
-    if (!sym) {
+    // symbol_id 우선순위: quote 응답 → search 결과
+    const symbolId = q?.symbol_id ?? sym?.id;
+    if (!symbolId) {
       setErr("종목 정보를 찾는 중입니다. 잠시 후 다시 시도하세요.");
       return;
     }
     try {
       const body: any = {
-        symbol_id: sym.id,
+        symbol_id: symbolId,
         side,
         order_type: orderType,
         qty,
@@ -124,8 +138,9 @@ export default function SymbolPage({
   }
 
   async function watchAdd() {
-    if (!sym) return;
-    await api(`/watchlist/${sym.id}`, { method: "POST" });
+    const symbolId = q?.symbol_id ?? sym?.id;
+    if (!symbolId) return;
+    await api(`/watchlist/${symbolId}`, { method: "POST" });
     setMsg("관심종목에 추가됨");
   }
 
@@ -155,20 +170,44 @@ export default function SymbolPage({
               {market} · {code}
             </p>
             <h1 className="mt-1 text-2xl font-bold">{displayName}</h1>
-            <div className="mt-1">
+            <div className="mt-1 flex items-center gap-2">
               <span
                 className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold ${
                   isOpen
-                    ? "bg-up/10 text-up"
-                    : "bg-bg-3 text-ink-3"
+                    ? "bg-green-100 text-green-700"
+                    : "bg-red-100 text-red-700"
                 }`}
               >
-                {isOpen ? "● 거래가능" : "○ 거래불가"}
+                {isOpen ? "● 거래가능" : "● 거래불가"}
               </span>
+              {isUS && rate && (
+                <div className="flex gap-0.5">
+                  <button
+                    onClick={() => setShowKrw(false)}
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                      !showKrw ? "bg-ink-1 text-white" : "bg-bg-2 text-ink-3"
+                    }`}
+                  >
+                    $
+                  </button>
+                  <button
+                    onClick={() => setShowKrw(true)}
+                    className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                      showKrw ? "bg-ink-1 text-white" : "bg-bg-2 text-ink-3"
+                    }`}
+                  >
+                    ₩
+                  </button>
+                </div>
+              )}
             </div>
             {price !== null && (
               <p className="mt-2 text-3xl font-bold">
-                {fmtPrice(price, market, sym?.currency)}
+                {fmtPrice(
+                  isUS && showKrw && rate ? price * rate : price,
+                  isUS && showKrw && rate ? "KRX" : market,
+                  isUS && showKrw && rate ? "KRW" : (sym?.currency || q?.currency)
+                )}
               </p>
             )}
             {change !== null && changePct !== null && (
@@ -178,7 +217,12 @@ export default function SymbolPage({
                 )}`}
               >
                 {change >= 0 ? "+" : ""}
-                {fmtPrice(change, market, sym?.currency)} ({changePct.toFixed(2)}%)
+                {fmtPrice(
+                  isUS && showKrw && rate ? change * rate : change,
+                  isUS && showKrw && rate ? "KRX" : market,
+                  isUS && showKrw && rate ? "KRW" : (sym?.currency || q?.currency)
+                )}{" "}
+                ({changePct.toFixed(2)}%)
               </p>
             )}
           </div>
