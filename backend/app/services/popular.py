@@ -200,13 +200,26 @@ async def popular_krx(sort: Sort, limit: int = 30) -> list[dict]:
             logger.warning("KRX popular fetch timeout")
             rows = []
 
-        # pykrx 실패 시: KIS → yfinance 순으로 시드 quote 채움
+        # pykrx 실패 시: KIS → Stooq → yfinance 순으로 시드 quote 채움
         if not rows:
             logger.info("KRX popular fallback: using seeds + KIS quote")
             seed_codes = [c for c, _, asset_type, _ in KR_SEEDS if asset_type == "STOCK"]
             quotes = await _kis.fetch_prices(seed_codes)
 
-            # KIS 미설정/실패 시 yfinance 폴백 (.KS 접미)
+            # KIS 미설정/실패 시 Stooq KR 폴백 (가장 빠름)
+            missing = [c for c in seed_codes if not quotes.get(c)]
+            if missing:
+                logger.info("KRX popular: stooq KR fallback for {} codes", len(missing))
+                try:
+                    stooq_quotes = await asyncio.wait_for(
+                        _stooq.fetch_quotes_kr(missing), timeout=15.0
+                    )
+                    quotes.update(stooq_quotes)
+                    logger.info("KRX popular: stooq returned {} quotes", len(stooq_quotes))
+                except asyncio.TimeoutError:
+                    logger.warning("KRX stooq fallback timeout")
+
+            # 그래도 누락된 종목은 yfinance 폴백 (.KS 접미)
             missing = [c for c in seed_codes if not quotes.get(c)]
             if missing:
                 logger.info("KRX popular: yfinance fallback for {} codes", len(missing))

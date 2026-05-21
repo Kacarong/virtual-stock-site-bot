@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState } from "react";
 import useSWR from "swr";
 import { api, fmtPrice, pctClass } from "@/lib/api";
+import { useUsdToKrw } from "@/lib/useUsdToKrw";
 
 type Row = {
   market: string;
@@ -44,8 +45,8 @@ function PopularPanel({
   refreshMs: number;
 }) {
   const [sort, setSort] = useState<Sort>("value");
-  // 해외주식만 USD/KRW 토글
-  const [showKrw, setShowKrw] = useState(false);
+  // 해외주식만 USD/KRW 토글 (페이지 간 공유)
+  const [showKrw, setShowKrw] = useUsdToKrw();
 
   const { data, isLoading, error } = useSWR<Row[]>(
     `/market/popular?market=${market}&sort=${sort}&limit=10`,

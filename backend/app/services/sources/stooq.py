@@ -57,6 +57,55 @@ async def fetch_history(code: str, count: int = 180) -> list[dict]:
     return out[-count:]
 
 
+async def fetch_quotes_kr(codes: list[str]) -> dict[str, dict]:
+    """Stooq로 KR 주식 quote 일괄 조회. {CODE: {price, prev_close, volume}}.
+
+    KRX 코드는 6자리 숫자 (예: 005930). Stooq에서는 `005930.kr` 형식.
+    """
+    if not codes:
+        return {}
+    # Stooq 한 번에 너무 많이 보내면 잘릴 수 있어 50개씩 끊어 요청
+    out: dict[str, dict] = {}
+    for i in range(0, len(codes), 50):
+        chunk = codes[i:i+50]
+        syms = "+".join([f"{c}.kr" for c in chunk])
+        url = f"{BASE}?s={syms}&f=sd2t2ohlcv&h&e=csv"
+        try:
+            async with httpx.AsyncClient(timeout=8) as c:
+                r = await c.get(url)
+                r.raise_for_status()
+                text = r.text
+        except Exception as e:
+            logger.warning("stooq KR fetch failed: {}", e)
+            continue
+        lines = text.strip().splitlines()
+        if len(lines) < 2:
+            continue
+        for line in lines[1:]:
+            parts = line.split(",")
+            if len(parts) < 8:
+                continue
+            try:
+                sym_raw = parts[0]
+                if ".KR" not in sym_raw.upper():
+                    continue
+                sym = sym_raw.split(".")[0]
+                close_str, open_str, vol_str = parts[6], parts[3], parts[7]
+                if close_str in ("N/D", "") or open_str in ("N/D", ""):
+                    continue
+                close = Decimal(close_str)
+                open_ = Decimal(open_str)
+                vol = Decimal(vol_str) if vol_str not in ("N/D", "") else Decimal("0")
+                out[sym] = {
+                    "price": close,
+                    "prev_close": open_,  # 시가를 전일 종가 근사로 사용
+                    "volume": vol,
+                }
+            except Exception:
+                continue
+    return out
+
+
 async def fetch_quotes(codes: list[str]) -> dict[str, dict]:
     """Stooq로 US 주식 quote 일괄 조회. {CODE: {price, prev_close, volume}}.
 

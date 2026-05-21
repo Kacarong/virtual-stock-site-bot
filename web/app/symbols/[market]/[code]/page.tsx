@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { Chart } from "@/components/Chart";
 import { api, fmtPrice, fmtQty, pctClass } from "@/lib/api";
+import { useUsdToKrw } from "@/lib/useUsdToKrw";
 
 type Quote = {
   market: string;
@@ -79,9 +80,9 @@ export default function SymbolPage({
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
 
-  // 미국주식 원화 보기 토글
+  // 미국주식 원화 보기 토글 (대시보드와 공유)
   const isUS = market === "NASDAQ" || market === "NYSE" || market === "AMEX";
-  const [showKrw, setShowKrw] = useState(false);
+  const [showKrw, setShowKrw] = useUsdToKrw();
   const { data: fx } = useSWR<{ usdkrw: string }>(
     isUS ? "/portfolio" : null,
     fetcher,
