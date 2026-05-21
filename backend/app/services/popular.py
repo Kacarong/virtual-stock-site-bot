@@ -275,28 +275,63 @@ async def popular_us(sort: Sort, limit: int = 30) -> list[dict]:
         name_by = {c: n for c, n, _, _ in US_SEEDS}
         market_by = {c: m for c, _, m, _ in US_SEEDS}
 
-        # 1순위: Stooq (빠르고 NAS에서 잘 됨)
-        quotes = await _stooq.fetch_quotes(codes)
         out: list[dict] = []
-        for code in codes:
-            q = quotes.get(code)
-            if not q:
-                continue
-            price = float(q["price"])
-            open_ = float(q.get("prev_close") or price) or price
-            volume = float(q.get("volume") or 0)
-            change_pct = ((price - open_) / open_ * 100) if open_ else 0.0
-            out.append(
-                {
-                    "market": market_by.get(code, "NASDAQ"),
-                    "code": code,
-                    "name": name_by.get(code, code),
-                    "price": price,
-                    "change_pct": change_pct,
-                    "volume": volume,
-                    "value": price * volume,
-                }
-            )
+
+        # 0순위: KIS 해외주식 (real 키 + 해외 권한 필요). 정확한 prev_close / 거래대금 제공.
+        if _kis._configured():
+            try:
+                kis_quotes = await asyncio.wait_for(
+                    _kis.fetch_overseas_prices(
+                        [(c, market_by.get(c, "NASDAQ")) for c in codes]
+                    ),
+                    timeout=25.0,
+                )
+            except asyncio.TimeoutError:
+                logger.warning("US popular: KIS overseas timeout")
+                kis_quotes = {}
+            for code in codes:
+                q = kis_quotes.get(code)
+                if not q:
+                    continue
+                price = float(q["price"])
+                prev = float(q.get("prev_close") or price) or price
+                volume = float(q.get("volume") or 0)
+                value = float(q.get("value") or 0) or price * volume
+                change_pct = ((price - prev) / prev * 100) if prev else 0.0
+                out.append(
+                    {
+                        "market": market_by.get(code, "NASDAQ"),
+                        "code": code,
+                        "name": name_by.get(code, code),
+                        "price": price,
+                        "change_pct": change_pct,
+                        "volume": volume,
+                        "value": value,
+                    }
+                )
+
+        # 1순위: Stooq (KIS 비활성/실패 시)
+        if not out:
+            quotes = await _stooq.fetch_quotes(codes)
+            for code in codes:
+                q = quotes.get(code)
+                if not q:
+                    continue
+                price = float(q["price"])
+                open_ = float(q.get("prev_close") or price) or price
+                volume = float(q.get("volume") or 0)
+                change_pct = ((price - open_) / open_ * 100) if open_ else 0.0
+                out.append(
+                    {
+                        "market": market_by.get(code, "NASDAQ"),
+                        "code": code,
+                        "name": name_by.get(code, code),
+                        "price": price,
+                        "change_pct": change_pct,
+                        "volume": volume,
+                        "value": price * volume,
+                    }
+                )
 
         # 2순위(스토크 0건이면): yfinance.history per-ticker 병렬
         if not out:

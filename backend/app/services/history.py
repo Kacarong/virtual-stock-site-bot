@@ -104,8 +104,11 @@ async def _krx_history(code: str, interval: Interval) -> list[dict]:
 
 
 async def _us_history(market: str, code: str, interval: Interval) -> list[dict]:
-    # 1d 는 Stooq 우선 (안정적)
+    # 1d: KIS 해외주식(real 키) → Stooq → yfinance
     if interval == "1d":
+        rows = await _kis.fetch_overseas_daily_candles(code, market, count=180)
+        if rows:
+            return rows
         rows = await _stooq.fetch_history(code, count=180)
         if rows:
             return rows

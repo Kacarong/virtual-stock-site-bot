@@ -11,7 +11,7 @@ import time
 from dataclasses import dataclass
 from decimal import Decimal
 
-from .sources import kis, upbit, yfinance_src
+from .sources import kis, stooq, upbit, yfinance_src
 
 # in-memory 캐시: (market, code) → (ts, quote)
 _ondemand_cache: dict[tuple[str, str], tuple[float, dict]] = {}
@@ -36,6 +36,13 @@ async def fetch_one(market: str, code: str) -> dict | None:
         # 장마감/실패 시 pykrx 종가 fallback
         return await kis.fetch_price_pykrx(code)
     if market in ("NASDAQ", "NYSE"):
+        # KIS 해외주식 (real 키 설정 시) → Stooq → yfinance 순
+        q = await kis.fetch_overseas_price(code, market)
+        if q:
+            return q
+        sq = await stooq.fetch_quotes([code])
+        if sq.get(code):
+            return sq[code]
         return await yfinance_src.fetch_quote(code)
     return None
 

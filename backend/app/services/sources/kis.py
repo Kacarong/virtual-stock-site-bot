@@ -212,6 +212,140 @@ async def fetch_minute_candles(code: str, count: int = 100) -> list[dict]:
         return []
 
 
+def _kis_excd(market: str) -> str:
+    """우리 market 표기 → KIS EXCD 코드."""
+    m = market.upper()
+    if m == "NASDAQ":
+        return "NAS"
+    if m == "NYSE":
+        return "NYS"
+    if m == "AMEX":
+        return "AMS"
+    return "NAS"
+
+
+async def fetch_overseas_price(code: str, market: str = "NASDAQ") -> dict | None:
+    """해외주식 현재체결가. TR=HHDFS00000300.
+
+    KIS 모의(vts)는 해외주식 미지원 — 실전(real) 키 필요.
+    """
+    if not _configured():
+        return None
+    token = await get_access_token()
+    if not token:
+        return None
+    excd = _kis_excd(market)
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.get(
+                f"{_base()}/uapi/overseas-price/v1/quotations/price",
+                params={"AUTH": "", "EXCD": excd, "SYMB": code},
+                headers={
+                    "authorization": f"Bearer {token}",
+                    "appkey": settings.KIS_APP_KEY,
+                    "appsecret": settings.KIS_APP_SECRET,
+                    "tr_id": "HHDFS00000300",
+                },
+            )
+            r.raise_for_status()
+            o = r.json().get("output", {}) or {}
+            if not o or not o.get("last"):
+                return None
+            try:
+                price = Decimal(o["last"])
+            except Exception:
+                return None
+            out: dict = {
+                "price": price,
+                "prev_close": Decimal(o.get("base") or o["last"]),
+            }
+            try:
+                out["volume"] = Decimal(o.get("tvol") or 0)
+                out["value"] = Decimal(o.get("tamt") or 0)
+            except Exception:
+                pass
+            return out
+    except Exception as e:
+        logger.debug("KIS overseas price failed {} {}: {}", market, code, e)
+        return None
+
+
+async def fetch_overseas_prices(codes_with_market: list[tuple[str, str]]) -> dict[str, dict]:
+    """다수 해외 종목. KIS는 단건 API라 동시성 제어해서 순회.
+
+    codes_with_market: [(code, market), ...]
+    반환 key: code
+    """
+    sem = asyncio.Semaphore(2)
+
+    async def one(code: str, market: str) -> tuple[str, dict | None]:
+        async with sem:
+            return code, await fetch_overseas_price(code, market)
+
+    results = await asyncio.gather(*(one(c, m) for c, m in codes_with_market))
+    return {c: q for c, q in results if q}
+
+
+async def fetch_overseas_daily_candles(
+    code: str, market: str = "NASDAQ", count: int = 100
+) -> list[dict]:
+    """해외주식 기간별시세 (일봉). TR=HHDFS76240000."""
+    if not _configured():
+        return []
+    token = await get_access_token()
+    if not token:
+        return []
+    excd = _kis_excd(market)
+    try:
+        from datetime import datetime as _dt
+
+        today = _dt.now().strftime("%Y%m%d")
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.get(
+                f"{_base()}/uapi/overseas-price/v1/quotations/dailyprice",
+                params={
+                    "AUTH": "",
+                    "EXCD": excd,
+                    "SYMB": code,
+                    "GUBN": "0",   # 0=일, 1=주, 2=월
+                    "BYMD": today,
+                    "MODP": "1",   # 수정주가 반영
+                },
+                headers={
+                    "authorization": f"Bearer {token}",
+                    "appkey": settings.KIS_APP_KEY,
+                    "appsecret": settings.KIS_APP_SECRET,
+                    "tr_id": "HHDFS76240000",
+                },
+            )
+            r.raise_for_status()
+            data = r.json()
+        rows = data.get("output2", []) or []
+        out: list[dict] = []
+        for row in reversed(rows[:count]):
+            try:
+                date = row.get("xymd")
+                if not date:
+                    continue
+                ts = int(_dt.strptime(date, "%Y%m%d").timestamp())
+                out.append(
+                    {
+                        "time": ts,
+                        "open": float(row["open"]),
+                        "high": float(row["high"]),
+                        "low": float(row["low"]),
+                        "close": float(row["clos"]),
+                        "volume": float(row.get("tvol") or 0),
+                    }
+                )
+            except Exception:
+                continue
+        return out
+    except Exception as e:
+        logger.warning("KIS overseas daily candles failed {} {}: {}", market, code, e)
+        return []
+
+
 async def fetch_price_pykrx(code: str) -> dict | None:
     """KIS 실패 시 pykrx로 최근 영업일 종가 fallback."""
     def _fetch() -> dict | None:
