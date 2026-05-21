@@ -53,29 +53,57 @@ def search(
 
 @router.get("/quote/{market}/{code}")
 async def quote(market: str, code: str, db: Session = Depends(get_db)) -> dict:
-    # DB에 마스터가 있는지 먼저 확인 (UI에서 검색 후 호출하는 정상 흐름)
+    """현재가 — DB 캐시 우선, 외부 호출은 짧은 타임아웃 + 백그라운드 갱신.
+
+    1. DB Price 있고 60초 이내 → 즉시 반환 + 백그라운드 갱신 trigger
+    2. DB Price 있고 오래됨    → 짧게 기다려보고 안 오면 DB 값 + 백그라운드 갱신
+    3. DB Price 없음            → 외부 호출 (max_wait=2s)
+    """
+    from datetime import datetime, timedelta
+    from ..services.quotes import _spawn_refresh
+
+    mkt = market.upper()
     sym = (
         db.query(Symbol)
-        .filter(Symbol.market == market.upper(), Symbol.code == code)
+        .filter(Symbol.market == mkt, Symbol.code == code)
         .first()
     )
-    # 최신가 캐시
     db_price = db.get(Price, sym.id) if sym else None
 
-    # On-demand 호출 (캐시 만료 또는 미존재 시)
-    q = await get_quote(market.upper(), code)
+    # DB Price가 신선하면 즉시 반환 (UPBIT는 30s, 그 외는 60s)
+    fresh_window = timedelta(seconds=30 if mkt == "UPBIT" else 60)
+    db_fresh = (
+        db_price is not None
+        and db_price.ts is not None
+        and (datetime.utcnow() - db_price.ts) < fresh_window
+    )
+
+    if db_fresh:
+        _spawn_refresh(mkt, code)
+        return {
+            "market": mkt,
+            "code": code,
+            "name": sym.name if sym else code,
+            "price": str(db_price.price),
+            "prev_close": str(db_price.prev_close) if db_price.prev_close else None,
+            "source": "db_fresh",
+        }
+
+    # DB가 오래됐거나 없음 → 외부 호출 (DB가 있으면 짧게, 없으면 좀 더 기다림)
+    q = await get_quote(mkt, code, max_wait=1.5 if db_price else 3.0)
+
     if not q and not db_price:
         raise HTTPException(status_code=404, detail="quote unavailable")
 
     price = q["price"] if q else db_price.price
     prev = (q.get("prev_close") if q else None) or (db_price.prev_close if db_price else None)
     return {
-        "market": market.upper(),
+        "market": mkt,
         "code": code,
         "name": sym.name if sym else code,
         "price": str(price),
         "prev_close": str(prev) if prev else None,
-        "source": "ondemand" if q else "cache",
+        "source": "ondemand" if q else "db_stale",
     }
 
 

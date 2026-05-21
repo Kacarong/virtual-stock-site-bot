@@ -22,7 +22,7 @@ async def fetch_history(code: str, count: int = 180) -> list[dict]:
     sym = code.lower().replace("-", "-") + ".us"
     url = f"{HIST_BASE}?s={sym}&i=d"
     try:
-        async with httpx.AsyncClient(timeout=15) as c:
+        async with httpx.AsyncClient(timeout=5) as c:
             r = await c.get(url)
             r.raise_for_status()
             text = r.text
@@ -70,7 +70,7 @@ async def fetch_quotes(codes: list[str]) -> dict[str, dict]:
     syms = "+".join([f"{c.lower().replace('.', '-')}.us" for c in codes])
     url = f"{BASE}?s={syms}&f=sd2t2ohlcv&h&e=csv"
     try:
-        async with httpx.AsyncClient(timeout=15) as c:
+        async with httpx.AsyncClient(timeout=5) as c:
             r = await c.get(url)
             r.raise_for_status()
             text = r.text

@@ -5,11 +5,14 @@
 - KRX:   KIS API (일/분봉) → yfinance fallback
 - US:    yfinance (1m/1h 가능) → Stooq (1d만)
 
-지원 interval: 1m / 5m / 1h / 1d
+지원 interval: 1m / 5m / 1h / 1d / 1w / 1mo / all
+
+캐시: stale-while-revalidate (인터벌별 TTL).
 """
 from __future__ import annotations
 
 import asyncio
+import time
 from datetime import datetime
 from typing import Literal
 
@@ -20,6 +23,23 @@ from .sources import stooq as _stooq
 from .sources import upbit as _upbit
 
 Interval = Literal["1m", "5m", "1h", "1d", "1w", "1mo", "all"]
+
+# 캐시 fresh TTL (초): 인터벌별로 다름
+_FRESH_TTL: dict[str, float] = {
+    "1m": 30.0,
+    "5m": 60.0,
+    "1h": 300.0,
+    "1d": 900.0,
+    "1w": 3600.0,
+    "1mo": 3600.0,
+    "all": 3600.0,
+}
+# stale 한계 — 이 시간까지는 백그라운드 갱신하면서 즉시 반환
+_STALE_TTL = 24 * 3600.0
+
+# (market, code, interval) → (ts, rows)
+_hist_cache: dict[tuple[str, str, str], tuple[float, list[dict]]] = {}
+_hist_inflight: dict[tuple[str, str, str], asyncio.Task] = {}
 
 
 def _aggregate(daily: list[dict], unit: str) -> list[dict]:
@@ -191,8 +211,9 @@ async def _us_history(market: str, code: str, interval: Interval) -> list[dict]:
     return await _yf_history(market, code, period_map[interval], yf_interval)
 
 
-async def get_history(market: str, code: str, interval: Interval = "1d") -> list[dict]:
-    market = market.upper()
+async def _fetch_history_uncached(
+    market: str, code: str, interval: Interval
+) -> list[dict]:
     if market == "UPBIT":
         return await _upbit_history(code, interval)
     if market == "KRX":
@@ -200,3 +221,61 @@ async def get_history(market: str, code: str, interval: Interval = "1d") -> list
     if market in ("NASDAQ", "NYSE"):
         return await _us_history(market, code, interval)
     return []
+
+
+def _spawn_hist_refresh(market: str, code: str, interval: Interval) -> None:
+    key = (market, code, interval)
+    t = _hist_inflight.get(key)
+    if t and not t.done():
+        return
+
+    async def _runner():
+        try:
+            rows = await _fetch_history_uncached(market, code, interval)
+            if rows:
+                _hist_cache[key] = (time.time(), rows)
+        except Exception as e:
+            logger.warning("history refresh failed {} {} {}: {}", market, code, interval, e)
+        finally:
+            _hist_inflight.pop(key, None)
+
+    try:
+        _hist_inflight[key] = asyncio.create_task(_runner())
+    except RuntimeError:
+        pass
+
+
+async def get_history(
+    market: str, code: str, interval: Interval = "1d", *, max_wait: float = 4.0
+) -> list[dict]:
+    """차트 히스토리 — stale-while-revalidate 캐시.
+
+    - fresh → 즉시 반환
+    - stale → 즉시 반환 + 백그라운드 갱신
+    - 없음  → 외부 호출 (max_wait 타임아웃)
+    """
+    market = market.upper()
+    key = (market, code, interval)
+    now = time.time()
+    cached = _hist_cache.get(key)
+    fresh_ttl = _FRESH_TTL.get(interval, 300.0)
+
+    if cached and now - cached[0] < fresh_ttl:
+        return cached[1]
+
+    if cached and now - cached[0] < _STALE_TTL:
+        _spawn_hist_refresh(market, code, interval)
+        return cached[1]
+
+    # 캐시 없음 → 외부 호출
+    try:
+        rows = await asyncio.wait_for(
+            _fetch_history_uncached(market, code, interval), timeout=max_wait
+        )
+    except asyncio.TimeoutError:
+        _spawn_hist_refresh(market, code, interval)
+        return cached[1] if cached else []
+
+    if rows:
+        _hist_cache[key] = (now, rows)
+    return rows or (cached[1] if cached else [])
