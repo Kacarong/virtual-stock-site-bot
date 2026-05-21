@@ -28,14 +28,14 @@ export function fmtKRW(v: string | number | null | undefined): string {
   if (v === null || v === undefined) return "-";
   const n = Number(v);
   if (!isFinite(n)) return "-";
-  return "₩ " + Math.round(n).toLocaleString();
+  return Math.round(n).toLocaleString() + " 원";
 }
 
 export function fmtUSD(v: string | number | null | undefined): string {
   if (v === null || v === undefined) return "-";
   const n = Number(v);
   if (!isFinite(n)) return "-";
-  return "$ " + n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  return n.toLocaleString(undefined, { maximumFractionDigits: 2 }) + " 달러";
 }
 
 export function fmtNum(v: string | number | null | undefined, digits = 2): string {
@@ -43,6 +43,50 @@ export function fmtNum(v: string | number | null | undefined, digits = 2): strin
   const n = Number(v);
   if (!isFinite(n)) return "-";
   return n.toLocaleString(undefined, { maximumFractionDigits: digits });
+}
+
+/** 코인용 가격대별 소수점 자동 조정 (BTC 100M원 ~ SHIB 0.04원 모두 자연스럽게). */
+export function fmtSmart(v: string | number | null | undefined): string {
+  if (v === null || v === undefined) return "-";
+  const n = Number(v);
+  if (!isFinite(n)) return "-";
+  const abs = Math.abs(n);
+  let digits: number;
+  if (abs >= 1000) digits = 0;
+  else if (abs >= 100) digits = 1;
+  else if (abs >= 1) digits = 2;
+  else if (abs >= 0.01) digits = 4;
+  else if (abs >= 0.0001) digits = 6;
+  else digits = 8;
+  return n.toLocaleString(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: digits,
+  });
+}
+
+/** 시장/통화에 맞춰 가격 + 단위 표기.
+ *  - KRX (주식, KRW): 정수 + "원"
+ *  - UPBIT (코인, KRW): 가격대별 소수점 + "원"
+ *  - NASDAQ/NYSE (USD): 소수점 2자리 + "달러"
+ */
+export function fmtPrice(
+  v: string | number | null | undefined,
+  market?: string,
+  currency?: string
+): string {
+  if (v === null || v === undefined) return "-";
+  const n = Number(v);
+  if (!isFinite(n)) return "-";
+  const m = (market || "").toUpperCase();
+  const cur = (currency || "").toUpperCase();
+  if (cur === "USD" || m === "NASDAQ" || m === "NYSE" || m === "AMEX") {
+    return n.toLocaleString(undefined, { maximumFractionDigits: 2 }) + " 달러";
+  }
+  if (m === "UPBIT") {
+    return fmtSmart(n) + " 원";
+  }
+  // KRX 등 KRW 주식 — 정수 원
+  return Math.round(n).toLocaleString() + " 원";
 }
 
 export function pctClass(pct: string | number): string {

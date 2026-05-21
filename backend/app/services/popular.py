@@ -41,15 +41,30 @@ def _lock_for(market: str) -> asyncio.Lock:
     return lk
 
 
-# popular US용 인기 50개 (전체 시드 130개 중 시총 상위)
+# popular US용 인기 ~70개 (시드 396개 중 시총/거래량 상위)
 US_POPULAR_CODES = [
+    # 메가캡 테크
     "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", "AVGO", "ORCL", "CRM",
     "AMD", "NFLX", "ADBE", "INTC", "QCOM", "CSCO", "PLTR", "UBER", "SHOP", "ABNB",
-    "JPM", "V", "MA", "BAC", "WFC", "GS", "BRK-B", "BLK", "COIN",
-    "WMT", "COST", "HD", "NKE", "SBUX", "MCD", "DIS", "KO",
-    "LLY", "UNH", "JNJ", "ABBV", "XOM", "CVX",
-    "BABA", "TSM", "ASML", "SMCI", "MSTR",
-    "SPY", "QQQ", "VOO", "IBIT",
+    "ASML", "TSM", "SMCI", "ARM", "MU", "AMAT", "LRCX",
+    "CRWD", "PANW", "NOW", "INTU", "SNOW",
+    # 금융
+    "JPM", "V", "MA", "BAC", "WFC", "GS", "MS", "BRK-B", "BLK",
+    "COIN", "HOOD", "SQ", "PYPL", "SOFI",
+    # 소비재
+    "WMT", "COST", "HD", "NKE", "SBUX", "MCD", "DIS", "KO", "PEP",
+    # 헬스
+    "LLY", "UNH", "JNJ", "ABBV", "PFE", "MRK",
+    # 에너지
+    "XOM", "CVX",
+    # 중국
+    "BABA", "PDD", "JD", "BIDU",
+    # 크립토
+    "MSTR", "MARA", "RIOT",
+    # 밈
+    "GME", "AMC", "RDDT",
+    # ETF
+    "SPY", "QQQ", "VOO", "IWM", "IBIT", "SOXX", "SMH", "ARKK", "TQQQ", "SQQQ",
 ]
 
 

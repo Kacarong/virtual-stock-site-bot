@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { Chart } from "@/components/Chart";
-import { api, fmtNum, pctClass } from "@/lib/api";
+import { api, fmtNum, fmtPrice, pctClass } from "@/lib/api";
 
 type Quote = {
   market: string;
@@ -107,8 +107,7 @@ export default function SymbolPage({
             <h1 className="mt-1 text-2xl font-bold">{q?.name || code}</h1>
             {price !== null && (
               <p className="mt-2 text-3xl font-bold">
-                {fmtNum(price, 2)}
-                {sym?.currency === "USD" ? " USD" : " KRW"}
+                {fmtPrice(price, market, sym?.currency)}
               </p>
             )}
             {change !== null && changePct !== null && (
@@ -118,7 +117,7 @@ export default function SymbolPage({
                 )}`}
               >
                 {change >= 0 ? "+" : ""}
-                {fmtNum(change, 2)} ({changePct.toFixed(2)}%)
+                {fmtPrice(change, market, sym?.currency)} ({changePct.toFixed(2)}%)
               </p>
             )}
           </div>

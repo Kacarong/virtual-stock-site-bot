@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useState } from "react";
 import useSWR from "swr";
-import { api, fmtNum, pctClass } from "@/lib/api";
+import { api, fmtPrice, pctClass } from "@/lib/api";
 
 type Row = {
   market: string;
@@ -100,7 +100,7 @@ function PopularPanel({
                   </div>
                   <div className="text-right">
                     <div className="text-sm font-semibold">
-                      {fmtNum(r.price, 2)}
+                      {fmtPrice(r.price, r.market)}
                     </div>
                     <div className={`text-[11px] ${pctClass(r.change_pct)}`}>
                       {r.change_pct >= 0 ? "+" : ""}
