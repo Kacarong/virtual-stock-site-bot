@@ -31,12 +31,15 @@ export default function SymbolPage({
   const { market, code: rawCode } = params;
   const code = decodeURIComponent(rawCode);
 
+  const [tf, setTf] = useState<"1m" | "5m" | "1h" | "1d">("1d");
+
   const { data: q } = useSWR<Quote>(`/market/quote/${market}/${code}`, fetcher, {
     refreshInterval: 3000,
   });
   const { data: candles } = useSWR<Candle[]>(
-    `/market/history/${market}/${code}?interval=1d`,
-    fetcher
+    `/market/history/${market}/${code}?interval=${tf}`,
+    fetcher,
+    { refreshInterval: tf === "1m" ? 10000 : 60000 }
   );
   const { data: hits } = useSWR<any[]>(
     `/market/search?q=${encodeURIComponent(code)}`,
@@ -128,6 +131,21 @@ export default function SymbolPage({
         </div>
 
         <div className="mt-6">
+          <div className="mb-3 flex gap-1">
+            {(["1m", "5m", "1h", "1d"] as const).map((iv) => (
+              <button
+                key={iv}
+                onClick={() => setTf(iv)}
+                className={`rounded-full px-3 py-1 text-xs ${
+                  tf === iv
+                    ? "bg-ink-1 text-white"
+                    : "bg-bg-2 text-ink-3 hover:bg-bg-3"
+                }`}
+              >
+                {iv === "1d" ? "일봉" : iv === "1h" ? "1시간" : iv === "5m" ? "5분" : "1분"}
+              </button>
+            ))}
+          </div>
           {candles && candles.length > 0 ? (
             <Chart data={candles} />
           ) : (

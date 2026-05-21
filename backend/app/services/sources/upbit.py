@@ -24,6 +24,27 @@ async def fetch_markets() -> list[dict]:
     return [m for m in all_mk if m["market"].startswith("KRW-")]
 
 
+async def fetch_candles(code: str, unit: str = "1d", count: int = 200) -> list[dict]:
+    """캔들 조회. unit: 1d / 1m / 5m / 15m / 60m."""
+    if unit == "1d":
+        url = f"{BASE}/v1/candles/days"
+        params = {"market": code, "count": min(count, 200)}
+    elif unit.endswith("m"):
+        minutes = int(unit[:-1])
+        url = f"{BASE}/v1/candles/minutes/{minutes}"
+        params = {"market": code, "count": min(count, 200)}
+    else:
+        return []
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.get(url, params=params)
+            r.raise_for_status()
+            return r.json()
+    except Exception as e:
+        logger.warning("upbit candles failed {} {}: {}", code, unit, e)
+        return []
+
+
 async def fetch_tickers_full(codes: list[str]) -> list[dict]:
     """원시 ticker 행 반환 — 거래대금 등 부가정보 포함."""
     if not codes:

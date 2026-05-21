@@ -104,6 +104,114 @@ async def fetch_price(code: str) -> dict | None:
         return None
 
 
+async def fetch_daily_candles(code: str, count: int = 100) -> list[dict]:
+    """국내주식 일봉. TR=FHKST01010400 (기간별시세, 최대 100개)."""
+    if not _configured():
+        return []
+    token = await get_access_token()
+    if not token:
+        return []
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.get(
+                f"{_base()}/uapi/domestic-stock/v1/quotations/inquire-daily-price",
+                params={
+                    "FID_COND_MRKT_DIV_CODE": "J",
+                    "FID_INPUT_ISCD": code,
+                    "FID_PERIOD_DIV_CODE": "D",
+                    "FID_ORG_ADJ_PRC": "0",
+                },
+                headers={
+                    "authorization": f"Bearer {token}",
+                    "appkey": settings.KIS_APP_KEY,
+                    "appsecret": settings.KIS_APP_SECRET,
+                    "tr_id": "FHKST01010400",
+                },
+            )
+            r.raise_for_status()
+            data = r.json()
+        rows = data.get("output", []) or []
+        out: list[dict] = []
+        from datetime import datetime as _dt
+
+        for row in reversed(rows[:count]):
+            try:
+                date = row.get("stck_bsop_date") or row.get("bstp_nmix_bsop_date")
+                if not date:
+                    continue
+                ts = int(_dt.strptime(date, "%Y%m%d").timestamp())
+                out.append(
+                    {
+                        "time": ts,
+                        "open": float(row["stck_oprc"]),
+                        "high": float(row["stck_hgpr"]),
+                        "low": float(row["stck_lwpr"]),
+                        "close": float(row["stck_clpr"]),
+                        "volume": float(row.get("acml_vol") or 0),
+                    }
+                )
+            except Exception:
+                continue
+        return out
+    except Exception as e:
+        logger.warning("KIS daily candles failed {}: {}", code, e)
+        return []
+
+
+async def fetch_minute_candles(code: str, count: int = 100) -> list[dict]:
+    """국내주식 당일 분봉 (1분). TR=FHKST03010200."""
+    if not _configured():
+        return []
+    token = await get_access_token()
+    if not token:
+        return []
+    try:
+        from datetime import datetime as _dt
+
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.get(
+                f"{_base()}/uapi/domestic-stock/v1/quotations/inquire-time-itemchartprice",
+                params={
+                    "FID_ETC_CLS_CODE": "",
+                    "FID_COND_MRKT_DIV_CODE": "J",
+                    "FID_INPUT_ISCD": code,
+                    "FID_INPUT_HOUR_1": "153000",  # 장마감 시간 기준 역순
+                    "FID_PW_DATA_INCU_YN": "N",
+                },
+                headers={
+                    "authorization": f"Bearer {token}",
+                    "appkey": settings.KIS_APP_KEY,
+                    "appsecret": settings.KIS_APP_SECRET,
+                    "tr_id": "FHKST03010200",
+                },
+            )
+            r.raise_for_status()
+            data = r.json()
+        rows = data.get("output2", []) or []
+        out: list[dict] = []
+        for row in reversed(rows[:count]):
+            try:
+                date = row["stck_bsop_date"]
+                hhmm = row["stck_cntg_hour"]  # HHMMSS
+                ts = int(_dt.strptime(date + hhmm, "%Y%m%d%H%M%S").timestamp())
+                out.append(
+                    {
+                        "time": ts,
+                        "open": float(row["stck_oprc"]),
+                        "high": float(row["stck_hgpr"]),
+                        "low": float(row["stck_lwpr"]),
+                        "close": float(row["stck_prpr"]),
+                        "volume": float(row.get("cntg_vol") or 0),
+                    }
+                )
+            except Exception:
+                continue
+        return out
+    except Exception as e:
+        logger.warning("KIS minute candles failed {}: {}", code, e)
+        return []
+
+
 async def fetch_price_pykrx(code: str) -> dict | None:
     """KIS 실패 시 pykrx로 최근 영업일 종가 fallback."""
     def _fetch() -> dict | None:

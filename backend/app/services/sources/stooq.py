@@ -14,6 +14,47 @@ import httpx
 from loguru import logger
 
 BASE = "https://stooq.com/q/l/"
+HIST_BASE = "https://stooq.com/q/d/l/"
+
+
+async def fetch_history(code: str, count: int = 180) -> list[dict]:
+    """일봉 히스토리 — Stooq d/l 엔드포인트 (CSV)."""
+    sym = code.lower().replace("-", "-") + ".us"
+    url = f"{HIST_BASE}?s={sym}&i=d"
+    try:
+        async with httpx.AsyncClient(timeout=15) as c:
+            r = await c.get(url)
+            r.raise_for_status()
+            text = r.text
+    except Exception as e:
+        logger.warning("stooq history failed {}: {}", code, e)
+        return []
+    from datetime import datetime as _dt
+
+    out: list[dict] = []
+    lines = text.strip().splitlines()
+    if len(lines) < 2:
+        return []
+    # header: Date,Open,High,Low,Close,Volume
+    for line in lines[1:]:
+        parts = line.split(",")
+        if len(parts) < 6:
+            continue
+        try:
+            ts = int(_dt.strptime(parts[0], "%Y-%m-%d").timestamp())
+            out.append(
+                {
+                    "time": ts,
+                    "open": float(parts[1]),
+                    "high": float(parts[2]),
+                    "low": float(parts[3]),
+                    "close": float(parts[4]),
+                    "volume": float(parts[5] or 0),
+                }
+            )
+        except Exception:
+            continue
+    return out[-count:]
 
 
 async def fetch_quotes(codes: list[str]) -> dict[str, dict]:
