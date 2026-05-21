@@ -9,10 +9,10 @@ type Row = {
   market: string;
   code: string;
   name: string;
-  price: number;
-  change_pct: number;
-  volume: number;
-  value: number;
+  price: number | null;
+  change_pct: number | null;
+  volume: number | null;
+  value: number | null;
 };
 
 type Sort = "value" | "volume" | "change";
@@ -113,9 +113,13 @@ function PopularPanel({
         ) : (
           <ul className="divide-y divide-bg-3">
             {data.map((r, i) => {
+              const priceNum = r.price ?? 0;
+              const changePct = r.change_pct ?? 0;
+              const volNum = r.volume ?? 0;
+              const valNum = r.value ?? 0;
               // US + 원화 표시 모드 — 환율 곱해서 KRX처럼 표시
               const displayPrice =
-                market === "US" && showKrw && rate ? r.price * rate : r.price;
+                market === "US" && showKrw && rate ? priceNum * rate : priceNum;
               const displayMarket =
                 market === "US" && showKrw ? "KRX" : r.market;
               return (
@@ -133,17 +137,20 @@ function PopularPanel({
                       </div>
                       <div className="text-[11px] text-ink-3">
                         {sort === "volume"
-                          ? fmtCompact(r.volume)
-                          : fmtCompact(r.value)}
+                          ? fmtCompact(volNum)
+                          : fmtCompact(valNum)}
                       </div>
                     </div>
                     <div className="text-right">
                       <div className="text-sm font-semibold">
-                        {fmtPrice(displayPrice, displayMarket)}
+                        {r.price == null
+                          ? "-"
+                          : fmtPrice(displayPrice, displayMarket)}
                       </div>
-                      <div className={`text-[11px] ${pctClass(r.change_pct)}`}>
-                        {r.change_pct >= 0 ? "+" : ""}
-                        {r.change_pct.toFixed(2)}%
+                      <div className={`text-[11px] ${pctClass(changePct)}`}>
+                        {r.change_pct == null
+                          ? "-"
+                          : `${changePct >= 0 ? "+" : ""}${changePct.toFixed(2)}%`}
                       </div>
                     </div>
                   </Link>
