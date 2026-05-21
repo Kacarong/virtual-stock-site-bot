@@ -19,7 +19,43 @@ from .sources import kis as _kis
 from .sources import stooq as _stooq
 from .sources import upbit as _upbit
 
-Interval = Literal["1m", "5m", "1h", "1d"]
+Interval = Literal["1m", "5m", "1h", "1d", "1w", "1mo", "all"]
+
+
+def _aggregate(daily: list[dict], unit: str) -> list[dict]:
+    """일봉 → 주봉('W') / 월봉('M') 집계."""
+    from datetime import datetime as _dt
+
+    groups: dict[str, dict] = {}
+    keys: list[str] = []
+    for c in daily:
+        try:
+            d = _dt.fromtimestamp(c["time"])
+        except Exception:
+            continue
+        if unit == "W":
+            iso = d.isocalendar()
+            key = f"{iso[0]}-W{iso[1]:02d}"
+        else:  # 'M'
+            key = f"{d.year}-{d.month:02d}"
+        if key not in groups:
+            groups[key] = {
+                "time": c["time"],
+                "open": c["open"],
+                "high": c["high"],
+                "low": c["low"],
+                "close": c["close"],
+                "volume": c.get("volume", 0) or 0,
+            }
+            keys.append(key)
+        else:
+            g = groups[key]
+            g["high"] = max(g["high"], c["high"])
+            g["low"] = min(g["low"], c["low"])
+            g["close"] = c["close"]
+            g["volume"] = (g.get("volume", 0) or 0) + (c.get("volume", 0) or 0)
+            g["time"] = c["time"]
+    return [groups[k] for k in keys]
 
 
 def _yf_symbol(market: str, code: str) -> str:
@@ -81,6 +117,16 @@ def _upbit_normalize(rows: list[dict]) -> list[dict]:
 
 
 async def _upbit_history(code: str, interval: Interval) -> list[dict]:
+    # 주/월: Upbit 전용 엔드포인트
+    if interval == "1w":
+        rows = await _upbit.fetch_candles(code, unit="weeks", count=200)
+        return _upbit_normalize(rows)
+    if interval == "1mo":
+        rows = await _upbit.fetch_candles(code, unit="months", count=200)
+        return _upbit_normalize(rows)
+    if interval == "all":
+        rows = await _upbit.fetch_candles(code, unit="1d", count=200)
+        return _upbit_normalize(rows)
     unit_map = {"1m": "1m", "5m": "5m", "1h": "60m", "1d": "1d"}
     unit = unit_map.get(interval, "1d")
     rows = await _upbit.fetch_candles(code, unit=unit, count=200)
@@ -88,6 +134,18 @@ async def _upbit_history(code: str, interval: Interval) -> list[dict]:
 
 
 async def _krx_history(code: str, interval: Interval) -> list[dict]:
+    # 주봉/월봉/전체: 일봉 받아서 집계
+    if interval in ("1w", "1mo", "all"):
+        rows = await _kis.fetch_daily_candles(code, count=100)
+        if not rows:
+            rows = await _yf_history("KRX", code, "max" if interval == "all" else "5y", "1d")
+        if not rows:
+            return []
+        if interval == "1w":
+            return _aggregate(rows, "W")
+        if interval == "1mo":
+            return _aggregate(rows, "M")
+        return rows  # all = 일봉 전체
     # KIS 우선
     if interval == "1d":
         rows = await _kis.fetch_daily_candles(code, count=180)
@@ -104,6 +162,22 @@ async def _krx_history(code: str, interval: Interval) -> list[dict]:
 
 
 async def _us_history(market: str, code: str, interval: Interval) -> list[dict]:
+    # 주봉/월봉/전체: 일봉 받아서 집계
+    if interval in ("1w", "1mo", "all"):
+        rows = await _kis.fetch_overseas_daily_candles(code, market, count=100)
+        if not rows:
+            rows = await _stooq.fetch_history(code, count=2000)
+        if not rows:
+            rows = await _yf_history(
+                market, code, "max" if interval == "all" else "5y", "1d"
+            )
+        if not rows:
+            return []
+        if interval == "1w":
+            return _aggregate(rows, "W")
+        if interval == "1mo":
+            return _aggregate(rows, "M")
+        return rows
     # 1d: KIS 해외주식(real 키) → Stooq → yfinance
     if interval == "1d":
         rows = await _kis.fetch_overseas_daily_candles(code, market, count=180)

@@ -92,8 +92,8 @@ def status() -> dict:
 
 @router.get("/history/{market}/{code}")
 async def history(market: str, code: str, interval: str = "1d") -> list[dict]:
-    if interval not in ("1d", "1h", "5m", "1m"):
-        raise HTTPException(400, "interval must be 1d/1h/5m/1m")
+    if interval not in ("1d", "1h", "5m", "1m", "1w", "1mo", "all"):
+        raise HTTPException(400, "interval must be 1m/5m/1h/1d/1w/1mo/all")
     return await get_history(market.upper(), code, interval)  # type: ignore
 
 

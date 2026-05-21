@@ -23,6 +23,12 @@ const SORTS: { key: Sort; label: string }[] = [
   { key: "change", label: "급등" },
 ];
 
+const TITLES: Record<string, string> = {
+  KRX: "국내주식 인기 100",
+  US: "해외주식 인기 100",
+  UPBIT: "코인 인기 100",
+};
+
 const fetcher = (u: string) => api(u);
 
 function fmtCompact(n: number): string {
@@ -34,26 +40,24 @@ function fmtCompact(n: number): string {
   return Math.round(n).toLocaleString();
 }
 
-function PopularPanel({
-  market,
-  title,
-  refreshMs,
+export default function PopularDetailPage({
+  params,
 }: {
-  market: "KRX" | "US" | "UPBIT";
-  title: string;
-  refreshMs: number;
+  params: { market: string };
 }) {
+  const market = params.market.toUpperCase();
   const [sort, setSort] = useState<Sort>("value");
-  // 해외주식만 USD/KRW 토글
   const [showKrw, setShowKrw] = useState(false);
 
-  const { data, isLoading, error } = useSWR<Row[]>(
-    `/market/popular?market=${market}&sort=${sort}&limit=10`,
+  const { data, isLoading } = useSWR<Row[]>(
+    `/market/popular?market=${market}&sort=${sort}&limit=100`,
     fetcher,
-    { refreshInterval: refreshMs, keepPreviousData: true }
+    {
+      refreshInterval: market === "UPBIT" ? 5000 : 30000,
+      keepPreviousData: true,
+    }
   );
 
-  // 환율 (US 패널만)
   const { data: fx } = useSWR<{ usdkrw: string }>(
     market === "US" ? "/portfolio" : null,
     fetcher,
@@ -62,15 +66,22 @@ function PopularPanel({
   const rate = fx?.usdkrw ? Number(fx.usdkrw) : null;
 
   return (
-    <div className="flex flex-col rounded-3xl bg-white shadow-sm">
-      <div className="flex items-center justify-between border-b border-bg-3 px-5 py-3">
-        <h3 className="font-semibold">{title}</h3>
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <div>
+          <Link href="/" className="text-xs text-ink-3 hover:text-ink-1">
+            ← 대시보드
+          </Link>
+          <h1 className="mt-1 text-2xl font-bold">
+            {TITLES[market] || "인기 종목"}
+          </h1>
+        </div>
         <div className="flex gap-1">
           {SORTS.map((s) => (
             <button
               key={s.key}
               onClick={() => setSort(s.key)}
-              className={`rounded-full px-2.5 py-1 text-xs ${
+              className={`rounded-full px-3 py-1.5 text-xs ${
                 sort === s.key
                   ? "bg-ink-1 text-white"
                   : "bg-bg-2 text-ink-3 hover:bg-bg-3"
@@ -83,10 +94,10 @@ function PopularPanel({
       </div>
 
       {market === "US" && (
-        <div className="flex justify-end gap-1 border-b border-bg-3 px-5 py-2">
+        <div className="flex justify-end gap-1">
           <button
             onClick={() => setShowKrw(false)}
-            className={`rounded-full px-2.5 py-0.5 text-[11px] ${
+            className={`rounded-full px-3 py-1 text-[11px] ${
               !showKrw ? "bg-ink-1 text-white" : "bg-bg-2 text-ink-3"
             }`}
           >
@@ -94,7 +105,7 @@ function PopularPanel({
           </button>
           <button
             onClick={() => setShowKrw(true)}
-            className={`rounded-full px-2.5 py-0.5 text-[11px] ${
+            className={`rounded-full px-3 py-1 text-[11px] ${
               showKrw ? "bg-ink-1 text-white" : "bg-bg-2 text-ink-3"
             }`}
           >
@@ -103,17 +114,14 @@ function PopularPanel({
         </div>
       )}
 
-      <div className="flex-1">
-        {error ? (
-          <div className="p-6 text-center text-xs text-red-500">불러오기 실패</div>
-        ) : isLoading && !data ? (
-          <div className="p-6 text-center text-xs text-ink-3">불러오는 중…</div>
+      <div className="rounded-3xl bg-white shadow-sm">
+        {isLoading && !data ? (
+          <div className="p-8 text-center text-sm text-ink-3">불러오는 중…</div>
         ) : !data?.length ? (
-          <div className="p-6 text-center text-xs text-ink-3">데이터 없음</div>
+          <div className="p-8 text-center text-sm text-ink-3">데이터 없음</div>
         ) : (
           <ul className="divide-y divide-bg-3">
             {data.map((r, i) => {
-              // US + 원화 표시 모드 — 환율 곱해서 KRX처럼 표시
               const displayPrice =
                 market === "US" && showKrw && rate ? r.price * rate : r.price;
               const displayMarket =
@@ -122,9 +130,9 @@ function PopularPanel({
                 <li key={`${r.market}-${r.code}`}>
                   <Link
                     href={`/symbols/${r.market}/${encodeURIComponent(r.code)}`}
-                    className="flex items-center gap-3 px-5 py-2.5 hover:bg-bg-2"
+                    className="flex items-center gap-3 px-5 py-3 hover:bg-bg-2"
                   >
-                    <span className="w-5 text-right text-xs text-ink-3">
+                    <span className="w-7 text-right text-xs text-ink-3">
                       {i + 1}
                     </span>
                     <div className="min-w-0 flex-1">
@@ -132,16 +140,19 @@ function PopularPanel({
                         {r.name}
                       </div>
                       <div className="text-[11px] text-ink-3">
+                        {r.market} · {r.code} ·{" "}
                         {sort === "volume"
-                          ? fmtCompact(r.volume)
-                          : fmtCompact(r.value)}
+                          ? `거래량 ${fmtCompact(r.volume)}`
+                          : `거래대금 ${fmtCompact(r.value)}`}
                       </div>
                     </div>
                     <div className="text-right">
                       <div className="text-sm font-semibold">
                         {fmtPrice(displayPrice, displayMarket)}
                       </div>
-                      <div className={`text-[11px] ${pctClass(r.change_pct)}`}>
+                      <div
+                        className={`text-[11px] ${pctClass(r.change_pct)}`}
+                      >
                         {r.change_pct >= 0 ? "+" : ""}
                         {r.change_pct.toFixed(2)}%
                       </div>
@@ -153,25 +164,6 @@ function PopularPanel({
           </ul>
         )}
       </div>
-
-      <div className="border-t border-bg-3 px-5 py-2 text-center">
-        <Link
-          href={`/popular/${market}`}
-          className="text-[11px] text-ink-3 hover:text-ink-1"
-        >
-          전체보기 →
-        </Link>
-      </div>
-    </div>
-  );
-}
-
-export function PopularBoard() {
-  return (
-    <div className="grid gap-4 lg:grid-cols-3">
-      <PopularPanel market="KRX" title="국내주식" refreshMs={30000} />
-      <PopularPanel market="US" title="해외주식" refreshMs={30000} />
-      <PopularPanel market="UPBIT" title="코인" refreshMs={5000} />
     </div>
   );
 }

@@ -25,9 +25,15 @@ async def fetch_markets() -> list[dict]:
 
 
 async def fetch_candles(code: str, unit: str = "1d", count: int = 200) -> list[dict]:
-    """캔들 조회. unit: 1d / 1m / 5m / 15m / 60m."""
+    """캔들 조회. unit: 1d / 1m / 5m / 15m / 60m / weeks / months."""
     if unit == "1d":
         url = f"{BASE}/v1/candles/days"
+        params = {"market": code, "count": min(count, 200)}
+    elif unit == "weeks":
+        url = f"{BASE}/v1/candles/weeks"
+        params = {"market": code, "count": min(count, 200)}
+    elif unit == "months":
+        url = f"{BASE}/v1/candles/months"
         params = {"market": code, "count": min(count, 200)}
     elif unit.endswith("m"):
         minutes = int(unit[:-1])

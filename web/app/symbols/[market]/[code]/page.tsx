@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { Chart } from "@/components/Chart";
-import { api, fmtNum, fmtPrice, pctClass } from "@/lib/api";
+import { api, fmtPrice, fmtQty, pctClass } from "@/lib/api";
 
 type Quote = {
   market: string;
@@ -21,7 +21,22 @@ type Candle = {
   close: number;
 };
 
+type MarketStatus = {
+  [m: string]: { open: boolean; next_open: string | null };
+};
+
 const fetcher = (u: string) => api(u);
+
+type TF = "1m" | "5m" | "1h" | "1d" | "1w" | "1mo" | "all";
+const TFS: { key: TF; label: string }[] = [
+  { key: "1m", label: "1분" },
+  { key: "5m", label: "5분" },
+  { key: "1h", label: "1시간" },
+  { key: "1d", label: "일봉" },
+  { key: "1w", label: "주봉" },
+  { key: "1mo", label: "월봉" },
+  { key: "all", label: "전체" },
+];
 
 export default function SymbolPage({
   params,
@@ -31,24 +46,32 @@ export default function SymbolPage({
   const { market, code: rawCode } = params;
   const code = decodeURIComponent(rawCode);
 
-  const [tf, setTf] = useState<"1m" | "5m" | "1h" | "1d">("1d");
+  const [tf, setTf] = useState<TF>("1d");
 
   const { data: q } = useSWR<Quote>(`/market/quote/${market}/${code}`, fetcher, {
     refreshInterval: 3000,
+    keepPreviousData: true,
   });
   const { data: candles } = useSWR<Candle[]>(
     `/market/history/${market}/${code}?interval=${tf}`,
     fetcher,
-    { refreshInterval: tf === "1m" ? 10000 : 60000 }
+    { refreshInterval: tf === "1m" ? 10000 : 60000, keepPreviousData: true }
   );
   const { data: hits } = useSWR<any[]>(
     `/market/search?q=${encodeURIComponent(code)}`,
     fetcher
   );
+  const { data: mstatus } = useSWR<MarketStatus>("/market/status", fetcher, {
+    refreshInterval: 60000,
+  });
   const sym = hits?.find((h: any) => h.market === market && h.code === code);
+  const isOpen = mstatus?.[market]?.open ?? (market === "UPBIT");
+  const nextOpen = mstatus?.[market]?.next_open;
 
   const [side, setSide] = useState<"BUY" | "SELL">("BUY");
-  const [orderType, setOrderType] = useState<"MARKET" | "LIMIT">("MARKET");
+  const [orderType, setOrderType] = useState<"MARKET" | "LIMIT" | "SCHEDULED">(
+    "MARKET"
+  );
   const [qty, setQty] = useState("1");
   const [limitPrice, setLimitPrice] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
@@ -57,6 +80,11 @@ export default function SymbolPage({
   useEffect(() => {
     if (q?.price && !limitPrice) setLimitPrice(q.price);
   }, [q?.price]);
+
+  // 시장 닫혀있으면 자동으로 예약주문 모드
+  useEffect(() => {
+    if (!isOpen && orderType === "MARKET") setOrderType("SCHEDULED");
+  }, [isOpen]);
 
   async function submit() {
     setMsg(null);
@@ -73,13 +101,23 @@ export default function SymbolPage({
         qty,
       };
       if (orderType === "LIMIT") body.limit_price = limitPrice;
+      if (orderType === "SCHEDULED") {
+        body.limit_price = limitPrice || q?.price;
+        body.scheduled_at = nextOpen;
+      }
       const r = await api<any>("/orders", {
         method: "POST",
         body: JSON.stringify(body),
       });
-      setMsg(
-        `주문 #${r.id} ${r.status === "FILLED" ? "체결" : "접수"} (${r.qty}주)`
-      );
+      const sideKo = side === "BUY" ? "매수" : "매도";
+      const stateKo =
+        r.status === "FILLED"
+          ? "체결됨"
+          : r.status === "PENDING" && orderType === "SCHEDULED"
+          ? "예약 완료"
+          : "접수됨";
+      const qStr = fmtQty(r.qty, market);
+      setMsg(`${r.name || code} ${sideKo} ${qStr}주 — ${stateKo}`);
     } catch (e: any) {
       setErr(e.message);
     }
@@ -96,6 +134,9 @@ export default function SymbolPage({
   const change = price !== null && prev !== null ? price - prev : null;
   const changePct = change !== null && prev ? (change / prev) * 100 : null;
 
+  // 종목명: quote 우선, hit 보조, 마지막 code
+  const displayName = q?.name && q.name !== code ? q.name : sym?.name || code;
+
   return (
     <div className="space-y-6">
       <div className="rounded-3xl bg-white p-6 shadow-sm">
@@ -104,7 +145,18 @@ export default function SymbolPage({
             <p className="text-xs text-ink-3">
               {market} · {code}
             </p>
-            <h1 className="mt-1 text-2xl font-bold">{q?.name || code}</h1>
+            <h1 className="mt-1 text-2xl font-bold">{displayName}</h1>
+            <div className="mt-1">
+              <span
+                className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                  isOpen
+                    ? "bg-up/10 text-up"
+                    : "bg-bg-3 text-ink-3"
+                }`}
+              >
+                {isOpen ? "● 거래가능" : "○ 거래불가"}
+              </span>
+            </div>
             {price !== null && (
               <p className="mt-2 text-3xl font-bold">
                 {fmtPrice(price, market, sym?.currency)}
@@ -130,18 +182,18 @@ export default function SymbolPage({
         </div>
 
         <div className="mt-6">
-          <div className="mb-3 flex gap-1">
-            {(["1m", "5m", "1h", "1d"] as const).map((iv) => (
+          <div className="mb-3 flex flex-wrap gap-1">
+            {TFS.map((iv) => (
               <button
-                key={iv}
-                onClick={() => setTf(iv)}
+                key={iv.key}
+                onClick={() => setTf(iv.key)}
                 className={`rounded-full px-3 py-1 text-xs ${
-                  tf === iv
+                  tf === iv.key
                     ? "bg-ink-1 text-white"
                     : "bg-bg-2 text-ink-3 hover:bg-bg-3"
                 }`}
               >
-                {iv === "1d" ? "일봉" : iv === "1h" ? "1시간" : iv === "5m" ? "5분" : "1분"}
+                {iv.label}
               </button>
             ))}
           </div>
@@ -157,7 +209,14 @@ export default function SymbolPage({
 
       {/* 주문 패널 */}
       <div className="rounded-3xl bg-white p-6 shadow-sm">
-        <h2 className="font-semibold">주문하기</h2>
+        <div className="flex items-center justify-between">
+          <h2 className="font-semibold">주문하기</h2>
+          {!isOpen && nextOpen && (
+            <span className="text-[11px] text-ink-3">
+              다음 개장: {new Date(nextOpen).toLocaleString("ko-KR")}
+            </span>
+          )}
+        </div>
 
         <div className="mt-4 grid grid-cols-2 gap-2">
           {(["BUY", "SELL"] as const).map((s) => (
@@ -178,7 +237,11 @@ export default function SymbolPage({
         </div>
 
         <div className="mt-4 flex gap-2">
-          {(["MARKET", "LIMIT"] as const).map((t) => (
+          {(
+            isOpen
+              ? (["MARKET", "LIMIT"] as const)
+              : (["SCHEDULED", "LIMIT"] as const)
+          ).map((t) => (
             <button
               key={t}
               onClick={() => setOrderType(t)}
@@ -186,10 +249,16 @@ export default function SymbolPage({
                 orderType === t ? "bg-ink-1 text-white" : "bg-bg-2 text-ink-2"
               }`}
             >
-              {t === "MARKET" ? "시장가" : "지정가"}
+              {t === "MARKET" ? "시장가" : t === "LIMIT" ? "지정가" : "예약주문"}
             </button>
           ))}
         </div>
+
+        {orderType === "SCHEDULED" && (
+          <p className="mt-2 rounded bg-yellow-50 p-2 text-[11px] text-yellow-700">
+            시장 마감 중입니다. 개장 직후 자동 체결되도록 예약됩니다.
+          </p>
+        )}
 
         <div className="mt-4 space-y-3">
           <div>
@@ -200,9 +269,11 @@ export default function SymbolPage({
               className="mt-1 w-full rounded-xl border border-bg-3 bg-white px-4 py-3 text-sm outline-none focus:border-brand"
             />
           </div>
-          {orderType === "LIMIT" && (
+          {(orderType === "LIMIT" || orderType === "SCHEDULED") && (
             <div>
-              <label className="text-xs text-ink-3">지정가</label>
+              <label className="text-xs text-ink-3">
+                {orderType === "SCHEDULED" ? "예상 체결가 (지정가)" : "지정가"}
+              </label>
               <input
                 value={limitPrice}
                 onChange={(e) => setLimitPrice(e.target.value)}
@@ -218,7 +289,9 @@ export default function SymbolPage({
             side === "BUY" ? "bg-up" : "bg-down"
           }`}
         >
-          {side === "BUY" ? "매수 주문" : "매도 주문"}
+          {orderType === "SCHEDULED"
+            ? `${side === "BUY" ? "예약 매수" : "예약 매도"}`
+            : `${side === "BUY" ? "매수 주문" : "매도 주문"}`}
         </button>
 
         {msg && (

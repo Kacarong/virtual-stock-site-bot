@@ -34,6 +34,17 @@ export function Chart({ data }: { data: Candle[] }) {
       },
       rightPriceScale: { borderVisible: false },
       timeScale: { borderVisible: false, timeVisible: true },
+      localization: {
+        priceFormatter: (p: number) => {
+          if (!isFinite(p)) return "-";
+          const abs = Math.abs(p);
+          const digits = abs >= 1000 ? 0 : abs >= 1 ? 2 : 4;
+          return p.toLocaleString(undefined, {
+            minimumFractionDigits: 0,
+            maximumFractionDigits: digits,
+          });
+        },
+      },
     });
     chartRef.current = chart;
     const series = chart.addCandlestickSeries({

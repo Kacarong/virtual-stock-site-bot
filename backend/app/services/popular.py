@@ -257,12 +257,13 @@ async def popular_krx(sort: Sort, limit: int = 30) -> list[dict]:
 # ------------------------------------------------------------------ US
 
 def _sort_rows(rows: list[dict], sort: Sort) -> list[dict]:
+    # secondary key=code 로 안정 정렬 (값 동률 시 같은 순서 유지 → 화면 튐 방지)
     if sort == "value":
-        rows.sort(key=lambda x: x["value"], reverse=True)
+        rows.sort(key=lambda x: (-x.get("value", 0), x.get("code", "")))
     elif sort == "volume":
-        rows.sort(key=lambda x: x["volume"], reverse=True)
+        rows.sort(key=lambda x: (-x.get("volume", 0), x.get("code", "")))
     else:
-        rows.sort(key=lambda x: x["change_pct"], reverse=True)
+        rows.sort(key=lambda x: (-x.get("change_pct", 0), x.get("code", "")))
     return rows
 
 

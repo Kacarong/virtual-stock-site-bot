@@ -89,6 +89,19 @@ export function fmtPrice(
   return Math.round(n).toLocaleString() + " 원";
 }
 
+/** 수량 표기 — 주식/ETF는 정수, 코인은 trailing 0 제거. */
+export function fmtQty(qty: string | number | null | undefined, market?: string): string {
+  if (qty === null || qty === undefined) return "-";
+  const n = Number(qty);
+  if (!isFinite(n)) return "-";
+  if ((market || "").toUpperCase() === "UPBIT") {
+    // 코인: 의미있는 소수점까지만
+    const s = n.toFixed(8);
+    return s.replace(/\.?0+$/, "") || "0";
+  }
+  return Math.floor(n).toLocaleString();
+}
+
 export function pctClass(pct: string | number): string {
   const n = Number(pct);
   if (n > 0) return "text-up";
