@@ -37,10 +37,25 @@ app.include_router(admin_router.router)
 
 
 @app.on_event("startup")
-def on_startup() -> None:
+async def on_startup() -> None:
     logger.info("Initializing DB schema...")
     init_db()
-    logger.info("DB ready. DEV_LOGIN={} INITIAL_CASH_KRW={}", settings.DEV_LOGIN, settings.INITIAL_CASH_KRW)
+    logger.info(
+        "DB ready. DEV_LOGIN={} INITIAL_CASH_KRW={} KIS_ENV={}",
+        settings.DEV_LOGIN,
+        settings.INITIAL_CASH_KRW,
+        settings.KIS_ENV,
+    )
+    # 시드 동기화 — 외부 의존 없이 종목 마스터 보장 (worker 안 떠 있어도 검색 가능)
+    try:
+        from .services.symbol_sync import sync_krx_seeds, sync_us, sync_upbit
+
+        n_kr = await sync_krx_seeds()
+        n_us = await sync_us()
+        n_up = await sync_upbit()
+        logger.info("seed sync ok: KR={} US={} UPBIT={}", n_kr, n_us, n_up)
+    except Exception as e:
+        logger.warning("startup seed sync failed: {}", e)
 
 
 @app.get("/")

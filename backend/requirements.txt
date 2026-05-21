@@ -1,3 +1,6 @@
+# Python 3.12 호환 (pykrx가 pkg_resources 의존)
+setuptools>=70
+
 # Web/API
 fastapi==0.115.0
 uvicorn[standard]==0.30.6
@@ -19,7 +22,7 @@ APScheduler==3.10.4
 authlib==1.3.2
 
 # Market data (Stage 2~)
-yfinance==0.2.43
+yfinance>=0.2.50
 pykrx==1.0.45
 pandas-market-calendars==4.4.1
 pandas==2.2.3
