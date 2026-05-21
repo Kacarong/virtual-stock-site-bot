@@ -134,8 +134,17 @@ export default function SymbolPage({
   const change = price !== null && prev !== null ? price - prev : null;
   const changePct = change !== null && prev ? (change / prev) * 100 : null;
 
-  // 종목명: quote 우선, hit 보조, 마지막 code
-  const displayName = q?.name && q.name !== code ? q.name : sym?.name || code;
+  // 종목명: 한글 우선 — quote/hit 중 영문/code가 아닌 것 선택
+  function pickName(n: string | undefined | null): boolean {
+    if (!n) return false;
+    if (n === code) return false;
+    return true;
+  }
+  // 한글 포함 여부
+  const hasHangul = (s: string) => /[\u3131-\uD79D]/.test(s);
+  const candidates = [q?.name, sym?.name].filter(pickName) as string[];
+  const hangul = candidates.find(hasHangul);
+  const displayName = hangul || candidates[0] || code;
 
   return (
     <div className="space-y-6">

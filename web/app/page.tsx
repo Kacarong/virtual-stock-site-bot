@@ -123,20 +123,6 @@ export default function Home() {
             {fmtKRW(s.total_pnl_krw)} ({Number(s.total_pnl_pct).toFixed(2)}%)
           </span>
         </div>
-        <div className="mt-4 flex gap-2">
-          <Link
-            href="/holdings"
-            className="rounded-full bg-bg-2 px-3 py-1 text-[11px] text-ink-2 hover:bg-bg-3"
-          >
-            보유종목 자세히 →
-          </Link>
-          <Link
-            href="/ranking"
-            className="rounded-full bg-bg-2 px-3 py-1 text-[11px] text-ink-2 hover:bg-bg-3"
-          >
-            🏆 자산 랭킹 →
-          </Link>
-        </div>
       </div>
 
       {/* 현금 카드 */}

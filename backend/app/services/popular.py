@@ -41,30 +41,40 @@ def _lock_for(market: str) -> asyncio.Lock:
     return lk
 
 
-# popular US용 인기 ~70개 (시드 396개 중 시총/거래량 상위)
+# popular US용 인기 ~120개 (시드 396개 중 시총/거래량 상위)
 US_POPULAR_CODES = [
     # 메가캡 테크
-    "AAPL", "MSFT", "NVDA", "GOOGL", "AMZN", "META", "TSLA", "AVGO", "ORCL", "CRM",
-    "AMD", "NFLX", "ADBE", "INTC", "QCOM", "CSCO", "PLTR", "UBER", "SHOP", "ABNB",
-    "ASML", "TSM", "SMCI", "ARM", "MU", "AMAT", "LRCX",
-    "CRWD", "PANW", "NOW", "INTU", "SNOW",
+    "AAPL", "MSFT", "NVDA", "GOOGL", "GOOG", "AMZN", "META", "TSLA", "AVGO", "ORCL",
+    "CRM", "AMD", "NFLX", "ADBE", "INTC", "QCOM", "CSCO", "PLTR", "UBER", "SHOP",
+    "ABNB", "ASML", "TSM", "SMCI", "ARM", "MU", "AMAT", "LRCX", "KLAC", "MRVL",
+    "CRWD", "PANW", "NOW", "INTU", "SNOW", "DDOG", "ZS", "NET", "MDB", "TEAM",
+    "DELL", "HPQ", "IBM", "TXN", "ADI", "NXPI", "ON", "MCHP", "WDC", "STX",
     # 금융
-    "JPM", "V", "MA", "BAC", "WFC", "GS", "MS", "BRK-B", "BLK",
-    "COIN", "HOOD", "SQ", "PYPL", "SOFI",
-    # 소비재
-    "WMT", "COST", "HD", "NKE", "SBUX", "MCD", "DIS", "KO", "PEP",
+    "JPM", "V", "MA", "BAC", "WFC", "GS", "MS", "BRK-B", "BLK", "C",
+    "COIN", "HOOD", "SQ", "PYPL", "SOFI", "AXP", "SCHW",
+    # 소비재/유통
+    "WMT", "COST", "HD", "TGT", "LOW", "NKE", "SBUX", "MCD", "DIS", "KO",
+    "PEP", "MDLZ", "PG", "CL",
     # 헬스
-    "LLY", "UNH", "JNJ", "ABBV", "PFE", "MRK",
-    # 에너지
-    "XOM", "CVX",
-    # 중국
-    "BABA", "PDD", "JD", "BIDU",
-    # 크립토
-    "MSTR", "MARA", "RIOT",
+    "LLY", "UNH", "JNJ", "ABBV", "PFE", "MRK", "TMO", "ABT", "DHR", "CVS",
+    "NVO",
+    # 에너지/소재
+    "XOM", "CVX", "COP", "SLB", "OXY",
+    # 통신/미디어
+    "T", "VZ", "TMUS", "CMCSA", "WBD", "NFLX",
+    # 중국 ADR
+    "BABA", "PDD", "JD", "BIDU", "NIO", "XPEV", "LI",
+    # 크립토/관련
+    "MSTR", "MARA", "RIOT", "CLSK",
     # 밈
-    "GME", "AMC", "RDDT",
-    # ETF
-    "SPY", "QQQ", "VOO", "IWM", "IBIT", "SOXX", "SMH", "ARKK", "TQQQ", "SQQQ",
+    "GME", "AMC", "RDDT", "DJT",
+    # 항공/여행
+    "DAL", "UAL", "AAL", "CCL", "RCL", "BKNG",
+    # ETF (대표)
+    "SPY", "QQQ", "VOO", "IWM", "DIA", "IBIT", "FBTC",
+    "SOXX", "SMH", "ARKK", "ARKG", "TQQQ", "SQQQ", "SOXL", "SOXS",
+    "XLK", "XLF", "XLE", "XLV", "XLY", "XLP", "XLI", "XLC", "XLU", "XLB",
+    "VTI", "VT", "VEA", "VWO", "BND", "TLT", "GLD", "SLV",
 ]
 
 
@@ -190,10 +200,10 @@ async def popular_krx(sort: Sort, limit: int = 30) -> list[dict]:
             logger.warning("KRX popular fetch timeout")
             rows = []
 
-        # pykrx 실패 시: KIS API로 시드 상위 30개 quote 받아서 채움 (KIS도 volume/value 제공)
+        # pykrx 실패 시: KIS API로 시드 전체 quote 받아서 채움 (KIS도 volume/value 제공)
         if not rows:
             logger.info("KRX popular fallback: using seeds + KIS quote")
-            seed_codes = [c for c, _, asset_type, _ in KR_SEEDS if asset_type == "STOCK"][:30]
+            seed_codes = [c for c, _, asset_type, _ in KR_SEEDS if asset_type == "STOCK"]
             quotes = await _kis.fetch_prices(seed_codes)
             rows = []
             for code in seed_codes:
@@ -291,9 +301,23 @@ async def popular_us(sort: Sort, limit: int = 30) -> list[dict]:
         name_by = {c: n for c, n, _, _ in US_SEEDS}
         market_by = {c: m for c, _, m, _ in US_SEEDS}
 
-        out: list[dict] = []
+        by_code: dict[str, dict] = {}
 
-        # 0순위: KIS 해외주식 (real 키 + 해외 권한 필요). 정확한 prev_close / 거래대금 제공.
+        def _add(code: str, price: float, prev: float, volume: float, value: float | None = None):
+            if price <= 0:
+                return
+            change_pct = ((price - prev) / prev * 100) if prev else 0.0
+            by_code[code] = {
+                "market": market_by.get(code, "NASDAQ"),
+                "code": code,
+                "name": name_by.get(code, code),
+                "price": price,
+                "change_pct": change_pct,
+                "volume": volume,
+                "value": value if value is not None else price * volume,
+            }
+
+        # 0순위: KIS 해외주식 (real 키 + 해외 권한 필요)
         if _kis._configured():
             try:
                 kis_quotes = await asyncio.wait_for(
@@ -305,55 +329,33 @@ async def popular_us(sort: Sort, limit: int = 30) -> list[dict]:
             except asyncio.TimeoutError:
                 logger.warning("US popular: KIS overseas timeout")
                 kis_quotes = {}
-            for code in codes:
-                q = kis_quotes.get(code)
+            for code, q in kis_quotes.items():
                 if not q:
                     continue
                 price = float(q["price"])
                 prev = float(q.get("prev_close") or price) or price
                 volume = float(q.get("volume") or 0)
                 value = float(q.get("value") or 0) or price * volume
-                change_pct = ((price - prev) / prev * 100) if prev else 0.0
-                out.append(
-                    {
-                        "market": market_by.get(code, "NASDAQ"),
-                        "code": code,
-                        "name": name_by.get(code, code),
-                        "price": price,
-                        "change_pct": change_pct,
-                        "volume": volume,
-                        "value": value,
-                    }
-                )
+                _add(code, price, prev, volume, value)
 
-        # 1순위: Stooq (KIS 비활성/실패 시)
-        if not out:
-            quotes = await _stooq.fetch_quotes(codes)
-            for code in codes:
-                q = quotes.get(code)
+        # 1순위: Stooq — KIS에서 못 받은 코드 보충
+        missing = [c for c in codes if c not in by_code]
+        if missing:
+            quotes = await _stooq.fetch_quotes(missing)
+            for code, q in quotes.items():
                 if not q:
                     continue
                 price = float(q["price"])
-                open_ = float(q.get("prev_close") or price) or price
+                prev = float(q.get("prev_close") or price) or price
                 volume = float(q.get("volume") or 0)
-                change_pct = ((price - open_) / open_ * 100) if open_ else 0.0
-                out.append(
-                    {
-                        "market": market_by.get(code, "NASDAQ"),
-                        "code": code,
-                        "name": name_by.get(code, code),
-                        "price": price,
-                        "change_pct": change_pct,
-                        "volume": volume,
-                        "value": price * volume,
-                    }
-                )
+                _add(code, price, prev, volume)
 
-        # 2순위(스토크 0건이면): yfinance.history per-ticker 병렬
-        if not out:
-            logger.info("US popular: stooq empty, falling back to yfinance.history")
+        # 2순위: yfinance — 여전히 누락된 코드만 채움
+        missing = [c for c in codes if c not in by_code]
+        if missing:
+            logger.info("US popular: yfinance fallback for {} missing", len(missing))
 
-            def _yf_fetch() -> list[dict]:
+            def _yf_fetch(targets: list[str]) -> list[dict]:
                 try:
                     import concurrent.futures
 
@@ -370,24 +372,18 @@ async def popular_us(sort: Sort, limit: int = 30) -> list[dict]:
                             price = float(last["Close"])
                             prev_close = float(prev["Close"]) or price
                             volume = float(last["Volume"])
-                            change_pct = (
-                                (price - prev_close) / prev_close * 100
-                            ) if prev_close else 0.0
                             return {
-                                "market": market_by.get(code, "NASDAQ"),
                                 "code": code,
-                                "name": name_by.get(code, code),
                                 "price": price,
-                                "change_pct": change_pct,
+                                "prev_close": prev_close,
                                 "volume": volume,
-                                "value": price * volume,
                             }
                         except Exception:
                             return None
 
                     res: list[dict] = []
                     with concurrent.futures.ThreadPoolExecutor(max_workers=20) as ex:
-                        for r in ex.map(one, codes, timeout=25):
+                        for r in ex.map(one, targets, timeout=25):
                             if r:
                                 res.append(r)
                     return res
@@ -396,32 +392,23 @@ async def popular_us(sort: Sort, limit: int = 30) -> list[dict]:
                     return []
 
             try:
-                out = await asyncio.wait_for(asyncio.to_thread(_yf_fetch), timeout=28.0)
+                yf_rows = await asyncio.wait_for(
+                    asyncio.to_thread(_yf_fetch, missing), timeout=28.0
+                )
             except asyncio.TimeoutError:
                 logger.warning("yfinance fallback timeout")
-                out = []
+                yf_rows = []
+            for r in yf_rows:
+                _add(r["code"], r["price"], r["prev_close"], r["volume"])
 
-        # yfinance 전부 실패 시: 시드만 표시(가격 0). 최소한 "데이터 없음"은 피함.
+        out = list(by_code.values())
+
+        # 모든 소스 실패 시: 가격 0인 placeholder는 표시하지 않음
+        # (사용자가 클릭해도 의미 없는 항목이 떠 있는 게 더 혼란스러움)
         if not out:
-            logger.warning("US popular all-failed, returning seed placeholders")
-            for code in US_POPULAR_CODES:
-                meta = next((x for x in US_SEEDS if x[0] == code), None)
-                if not meta:
-                    continue
-                out.append(
-                    {
-                        "market": meta[2],
-                        "code": code,
-                        "name": meta[1],
-                        "price": 0.0,
-                        "change_pct": 0.0,
-                        "volume": 0.0,
-                        "value": 0.0,
-                    }
-                )
+            logger.warning("US popular all-failed, returning empty")
 
         _store(("US", sort), _sort_rows(list(out), sort))
-        # 다른 정렬도 같은 데이터로 미리 캐시
         for s in ("value", "volume", "change"):
             if s != sort:
                 _store(("US", s), _sort_rows(list(out), s))  # type: ignore

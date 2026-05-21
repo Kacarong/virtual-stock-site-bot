@@ -29,7 +29,7 @@ def search(
     limit: int = 20,
     db: Session = Depends(get_db),
 ) -> list[dict]:
-    """종목 검색 (코드/이름 부분일치)."""
+    """종목 검색 (코드/이름 부분일치). 시드 한글명으로 자가복구."""
     like = f"%{q}%"
     rows = (
         db.query(Symbol)
@@ -38,6 +38,18 @@ def search(
         .limit(limit)
         .all()
     )
+    # 시드와 이름이 다르면 한글명으로 보정
+    dirty = False
+    for s in rows:
+        seed = _seed_name(s.market, s.code)
+        if seed and s.name != seed:
+            s.name = seed
+            dirty = True
+    if dirty:
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
     return [
         {
             "id": s.id,
@@ -49,6 +61,24 @@ def search(
         }
         for s in rows
     ]
+
+
+def _seed_name(market: str, code: str) -> str | None:
+    """DB가 비어 있어도 시드에서 한글 이름을 가져오는 fallback."""
+    if market == "KRX":
+        from ..services.sources.kr_seeds import KR_SEEDS
+        for c, n, _, _ in KR_SEEDS:
+            if c == code:
+                return n
+    elif market in ("NASDAQ", "NYSE", "AMEX"):
+        from ..services.sources.us_seeds import US_SEEDS
+        for c, n, _, _ in US_SEEDS:
+            if c == code:
+                return n
+    elif market == "UPBIT":
+        # 업비트 시드는 별도 없음 (API에서 동기화)
+        return None
+    return None
 
 
 @router.get("/quote/{market}/{code}")
@@ -70,6 +100,17 @@ async def quote(market: str, code: str, db: Session = Depends(get_db)) -> dict:
     )
     db_price = db.get(Price, sym.id) if sym else None
 
+    # 시드 한글명: DB 이름이 영어이거나 코드와 같으면 시드 이름으로 덮어쓰기
+    seed_name = _seed_name(mkt, code)
+    if sym and seed_name and sym.name != seed_name:
+        # DB 이름이 시드와 다르면 즉시 업데이트 (재배포 후 첫 호출 시 보정)
+        sym.name = seed_name
+        try:
+            db.commit()
+        except Exception:
+            db.rollback()
+    display_name = (sym.name if sym else None) or seed_name or code
+
     # DB Price가 신선하면 즉시 반환 (UPBIT는 30s, 그 외는 60s)
     fresh_window = timedelta(seconds=30 if mkt == "UPBIT" else 60)
     db_fresh = (
@@ -83,7 +124,7 @@ async def quote(market: str, code: str, db: Session = Depends(get_db)) -> dict:
         return {
             "market": mkt,
             "code": code,
-            "name": sym.name if sym else code,
+            "name": display_name,
             "price": str(db_price.price),
             "prev_close": str(db_price.prev_close) if db_price.prev_close else None,
             "source": "db_fresh",
@@ -100,7 +141,7 @@ async def quote(market: str, code: str, db: Session = Depends(get_db)) -> dict:
     return {
         "market": mkt,
         "code": code,
-        "name": sym.name if sym else code,
+        "name": display_name,
         "price": str(price),
         "prev_close": str(prev) if prev else None,
         "source": "ondemand" if q else "db_stale",

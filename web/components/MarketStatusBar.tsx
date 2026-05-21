@@ -28,7 +28,9 @@ export function MarketStatusBar() {
           <span
             key={m.key}
             className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-semibold ${
-              open ? "bg-up/10 text-up" : "bg-bg-2 text-ink-3"
+              open
+                ? "bg-green-100 text-green-700"
+                : "bg-red-100 text-red-700"
             }`}
             title={
               !open && data?.[m.key]?.next_open
