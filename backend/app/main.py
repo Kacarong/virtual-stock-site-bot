@@ -57,6 +57,24 @@ async def on_startup() -> None:
     except Exception as e:
         logger.warning("startup seed sync failed: {}", e)
 
+    # 인기 종목 워밍업 — 첫 사용자 입장 전에 캐시 채워 둠
+    import asyncio as _aio
+    from .services.popular import popular as _popular
+
+    async def _warmup() -> None:
+        try:
+            await _aio.gather(
+                _popular("KRX", "value", 30),
+                _popular("US", "value", 30),
+                _popular("UPBIT", "value", 30),
+                return_exceptions=True,
+            )
+            logger.info("popular warmup done")
+        except Exception as e:
+            logger.warning("popular warmup failed: {}", e)
+
+    _aio.create_task(_warmup())
+
 
 @app.get("/")
 def root() -> dict:
