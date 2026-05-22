@@ -2,6 +2,13 @@ import type { Config } from "tailwindcss";
 
 const config: Config = {
   content: ["./app/**/*.{ts,tsx}", "./components/**/*.{ts,tsx}"],
+  // 동적 className 또는 JIT가 놓치는 색상 보장
+  safelist: [
+    "bg-green-100", "text-green-700",
+    "bg-red-100", "text-red-700",
+    "bg-yellow-50", "text-yellow-700",
+    "bg-green-50", "text-green-700",
+  ],
   darkMode: "class",
   theme: {
     extend: {
