@@ -4,15 +4,16 @@ import Link from "next/link";
 import { useState } from "react";
 import useSWR from "swr";
 import { api, fmtPrice, pctClass } from "@/lib/api";
+import { useUsdToKrw } from "@/lib/useUsdToKrw";
 
 type Row = {
   market: string;
   code: string;
   name: string;
-  price: number;
-  change_pct: number;
-  volume: number;
-  value: number;
+  price: number | null;
+  change_pct: number | null;
+  volume: number | null;
+  value: number | null;
 };
 
 type Sort = "value" | "volume" | "change";
@@ -31,13 +32,15 @@ const TITLES: Record<string, string> = {
 
 const fetcher = (u: string) => api(u);
 
-function fmtCompact(n: number): string {
-  if (!isFinite(n)) return "-";
-  const abs = Math.abs(n);
-  if (abs >= 1e12) return (n / 1e12).toFixed(1) + "조";
-  if (abs >= 1e8) return (n / 1e8).toFixed(1) + "억";
-  if (abs >= 1e4) return (n / 1e4).toFixed(1) + "만";
-  return Math.round(n).toLocaleString();
+function fmtCompact(n: number | null | undefined): string {
+  if (n === null || n === undefined) return "-";
+  const v = Number(n);
+  if (!isFinite(v)) return "-";
+  const abs = Math.abs(v);
+  if (abs >= 1e12) return (v / 1e12).toFixed(1) + "조";
+  if (abs >= 1e8) return (v / 1e8).toFixed(1) + "억";
+  if (abs >= 1e4) return (v / 1e4).toFixed(1) + "만";
+  return Math.round(v).toLocaleString();
 }
 
 export default function PopularDetailPage({
@@ -47,7 +50,8 @@ export default function PopularDetailPage({
 }) {
   const market = params.market.toUpperCase();
   const [sort, setSort] = useState<Sort>("value");
-  const [showKrw, setShowKrw] = useState(false);
+  // 대시보드/상세 페이지와 동일한 USD/KRW 토글 (localStorage 공유)
+  const [showKrw, setShowKrw] = useUsdToKrw();
 
   const { data, isLoading } = useSWR<Row[]>(
     `/market/popular?market=${market}&sort=${sort}&limit=100`,
@@ -122,10 +126,22 @@ export default function PopularDetailPage({
         ) : (
           <ul className="divide-y divide-bg-3">
             {data.map((r, i) => {
+              const priceNum =
+                r.price === null || r.price === undefined
+                  ? null
+                  : Number(r.price);
+              const validPrice = priceNum !== null && isFinite(priceNum);
               const displayPrice =
-                market === "US" && showKrw && rate ? r.price * rate : r.price;
+                validPrice && market === "US" && showKrw && rate
+                  ? (priceNum as number) * rate
+                  : priceNum;
               const displayMarket =
-                market === "US" && showKrw ? "KRX" : r.market;
+                market === "US" && showKrw && rate ? "KRX" : r.market;
+              const chgNum =
+                r.change_pct === null || r.change_pct === undefined
+                  ? null
+                  : Number(r.change_pct);
+              const validChg = chgNum !== null && isFinite(chgNum);
               return (
                 <li key={`${r.market}-${r.code}`}>
                   <Link
@@ -148,13 +164,18 @@ export default function PopularDetailPage({
                     </div>
                     <div className="text-right">
                       <div className="text-sm font-semibold">
-                        {fmtPrice(displayPrice, displayMarket)}
+                        {validPrice
+                          ? fmtPrice(displayPrice as number, displayMarket)
+                          : "-"}
                       </div>
                       <div
-                        className={`text-[11px] ${pctClass(r.change_pct)}`}
+                        className={`text-[11px] ${
+                          validChg ? pctClass(chgNum as number) : "text-ink-3"
+                        }`}
                       >
-                        {r.change_pct >= 0 ? "+" : ""}
-                        {r.change_pct.toFixed(2)}%
+                        {validChg
+                          ? `${(chgNum as number) >= 0 ? "+" : ""}${(chgNum as number).toFixed(2)}%`
+                          : "-"}
                       </div>
                     </div>
                   </Link>

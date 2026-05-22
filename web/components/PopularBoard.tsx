@@ -26,13 +26,15 @@ const SORTS: { key: Sort; label: string }[] = [
 
 const fetcher = (u: string) => api(u);
 
-function fmtCompact(n: number): string {
-  if (!isFinite(n)) return "-";
-  const abs = Math.abs(n);
-  if (abs >= 1e12) return (n / 1e12).toFixed(1) + "조";
-  if (abs >= 1e8) return (n / 1e8).toFixed(1) + "억";
-  if (abs >= 1e4) return (n / 1e4).toFixed(1) + "만";
-  return Math.round(n).toLocaleString();
+function fmtCompact(n: number | null | undefined): string {
+  if (n === null || n === undefined) return "-";
+  const v = Number(n);
+  if (!isFinite(v) || v <= 0) return "-";
+  const abs = Math.abs(v);
+  if (abs >= 1e12) return (v / 1e12).toFixed(1) + "조";
+  if (abs >= 1e8) return (v / 1e8).toFixed(1) + "억";
+  if (abs >= 1e4) return (v / 1e4).toFixed(1) + "만";
+  return Math.round(v).toLocaleString();
 }
 
 function PopularPanel({
@@ -114,15 +116,26 @@ function PopularPanel({
         ) : (
           <ul className="divide-y divide-bg-3">
             {data.map((r, i) => {
-              const priceNum = r.price ?? 0;
-              const changePct = r.change_pct ?? 0;
+              const priceNum =
+                r.price === null || r.price === undefined
+                  ? null
+                  : Number(r.price);
+              const validPrice =
+                priceNum !== null && isFinite(priceNum) && priceNum > 0;
+              const chgNum =
+                r.change_pct === null || r.change_pct === undefined
+                  ? null
+                  : Number(r.change_pct);
+              const validChg = chgNum !== null && isFinite(chgNum);
               const volNum = r.volume ?? 0;
               const valNum = r.value ?? 0;
               // US + 원화 표시 모드 — 환율 곱해서 KRX처럼 표시
               const displayPrice =
-                market === "US" && showKrw && rate ? priceNum * rate : priceNum;
+                validPrice && market === "US" && showKrw && rate
+                  ? (priceNum as number) * rate
+                  : priceNum;
               const displayMarket =
-                market === "US" && showKrw ? "KRX" : r.market;
+                market === "US" && showKrw && rate ? "KRX" : r.market;
               return (
                 <li key={`${r.market}-${r.code}`}>
                   <Link
@@ -144,14 +157,18 @@ function PopularPanel({
                     </div>
                     <div className="text-right">
                       <div className="text-sm font-semibold">
-                        {r.price == null
-                          ? "-"
-                          : fmtPrice(displayPrice, displayMarket)}
+                        {validPrice
+                          ? fmtPrice(displayPrice as number, displayMarket)
+                          : "-"}
                       </div>
-                      <div className={`text-[11px] ${pctClass(changePct)}`}>
-                        {r.change_pct == null
-                          ? "-"
-                          : `${changePct >= 0 ? "+" : ""}${changePct.toFixed(2)}%`}
+                      <div
+                        className={`text-[11px] ${
+                          validChg ? pctClass(chgNum as number) : "text-ink-3"
+                        }`}
+                      >
+                        {validChg
+                          ? `${(chgNum as number) >= 0 ? "+" : ""}${(chgNum as number).toFixed(2)}%`
+                          : "-"}
                       </div>
                     </div>
                   </Link>

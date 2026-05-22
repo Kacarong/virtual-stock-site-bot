@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import time
 from decimal import Decimal
 from typing import Literal
@@ -76,6 +77,17 @@ US_POPULAR_CODES = [
     "XLK", "XLF", "XLE", "XLV", "XLY", "XLP", "XLI", "XLC", "XLU", "XLB",
     "VTI", "VT", "VEA", "VWO", "BND", "TLT", "GLD", "SLV",
 ]
+
+
+def _safe_float(v, default: float = 0.0) -> float:
+    """NaN/None/문자 → default. JSON 직렬화 시 NaN이 흘러 클라이언트 깨지는 것 방지."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(f):
+        return default
+    return f
 
 
 def _cached(key: tuple[str, str]) -> list[dict] | None:
@@ -301,6 +313,9 @@ async def popular_krx(sort: Sort, limit: int = 30) -> list[dict]:
         name = name_by.get(code) or seed_name.get(code)
         if not name:
             continue
+        price = _safe_float(r.get("price"))
+        if price <= 0:
+            continue  # pykrx가 정지/상폐 종목에 0/NaN 흘리는 케이스 제외
         # 매핑용으로 임시 추가 (다음 줄에서 사용)
         name_by[code] = name
         out.append(
@@ -308,10 +323,10 @@ async def popular_krx(sort: Sort, limit: int = 30) -> list[dict]:
                 "market": "KRX",
                 "code": code,
                 "name": name_by[code],
-                "price": float(r["price"]),
-                "change_pct": float(r["change_pct"]),
-                "volume": float(r["volume"]),
-                "value": float(r["value"]),
+                "price": price,
+                "change_pct": _safe_float(r.get("change_pct")),
+                "volume": _safe_float(r.get("volume")),
+                "value": _safe_float(r.get("value")),
             }
         )
 
