@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import time
 from datetime import datetime
 from typing import Literal
@@ -211,16 +212,44 @@ async def _us_history(market: str, code: str, interval: Interval) -> list[dict]:
     return await _yf_history(market, code, period_map[interval], yf_interval)
 
 
+def _clean_rows(rows: list[dict]) -> list[dict]:
+    """NaN/None OHLC 또는 time 누락된 캔들 제거 + 시간 오름차순."""
+    def _ok(v) -> bool:
+        if v is None:
+            return False
+        try:
+            f = float(v)
+        except Exception:
+            return False
+        return math.isfinite(f)
+
+    out = []
+    for r in rows:
+        if not _ok(r.get("time")):
+            continue
+        if not (_ok(r.get("open")) and _ok(r.get("high")) and _ok(r.get("low")) and _ok(r.get("close"))):
+            continue
+        out.append(r)
+    out.sort(key=lambda x: x["time"])
+    # 시간 중복 제거 (마지막 값 채택)
+    dedup: dict[int, dict] = {}
+    for r in out:
+        dedup[int(r["time"])] = r
+    return list(dedup.values())
+
+
 async def _fetch_history_uncached(
     market: str, code: str, interval: Interval
 ) -> list[dict]:
     if market == "UPBIT":
-        return await _upbit_history(code, interval)
-    if market == "KRX":
-        return await _krx_history(code, interval)
-    if market in ("NASDAQ", "NYSE"):
-        return await _us_history(market, code, interval)
-    return []
+        rows = await _upbit_history(code, interval)
+    elif market == "KRX":
+        rows = await _krx_history(code, interval)
+    elif market in ("NASDAQ", "NYSE"):
+        rows = await _us_history(market, code, interval)
+    else:
+        rows = []
+    return _clean_rows(rows)
 
 
 def _spawn_hist_refresh(market: str, code: str, interval: Interval) -> None:

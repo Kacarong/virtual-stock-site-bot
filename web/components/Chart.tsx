@@ -68,6 +68,20 @@ export function Chart({ data, priceScale = 1, unitLabel, integerOnly }: Props) {
     });
     chartRef.current = chart;
 
+    // 유효한 캔들만 (null/NaN/timestamp 누락 방어 + 시간 오름차순 + 중복 제거)
+    const isNum = (v: any) => typeof v === "number" && isFinite(v);
+    const clean = data
+      .filter(
+        (d) =>
+          isNum(d?.time) &&
+          isNum(d?.open) &&
+          isNum(d?.high) &&
+          isNum(d?.low) &&
+          isNum(d?.close)
+      )
+      .sort((a, b) => a.time - b.time)
+      .filter((d, i, arr) => i === 0 || d.time !== arr[i - 1].time);
+
     // 메인 캔들 (한국식 상승=빨강, 하락=파랑)
     const candle = chart.addCandlestickSeries({
       upColor: "#FF4D4D",
@@ -77,7 +91,7 @@ export function Chart({ data, priceScale = 1, unitLabel, integerOnly }: Props) {
       borderVisible: false,
     });
     candle.setData(
-      data.map((d) => ({
+      clean.map((d) => ({
         time: d.time as any,
         open: d.open * priceScale,
         high: d.high * priceScale,
@@ -87,7 +101,7 @@ export function Chart({ data, priceScale = 1, unitLabel, integerOnly }: Props) {
     );
 
     // 거래량 막대 (오버레이 — 화면 하단 25% 차지)
-    const hasVolume = data.some((d) => d.volume && d.volume > 0);
+    const hasVolume = clean.some((d) => isNum(d.volume) && (d.volume as number) > 0);
     if (hasVolume) {
       const volume = chart.addHistogramSeries({
         priceFormat: { type: "volume" },
@@ -98,9 +112,9 @@ export function Chart({ data, priceScale = 1, unitLabel, integerOnly }: Props) {
         scaleMargins: { top: 0.78, bottom: 0 },
       });
       volume.setData(
-        data.map((d) => ({
+        clean.map((d) => ({
           time: d.time as any,
-          value: d.volume ?? 0,
+          value: isNum(d.volume) ? (d.volume as number) : 0,
           // 양봉=빨강, 음봉=파랑 (반투명)
           color: d.close >= d.open ? "#FF4D4D88" : "#3182F688",
         })) as any
