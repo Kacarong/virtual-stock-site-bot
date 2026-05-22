@@ -14,14 +14,17 @@ type Row = {
   change_pct: number | null;
   volume: number | null;
   value: number | null;
+  market_cap?: number | null;
 };
 
-type Sort = "value" | "volume" | "change";
+type Sort = "value" | "volume" | "change" | "decline" | "market_cap";
 
 const SORTS: { key: Sort; label: string }[] = [
   { key: "value", label: "거래대금" },
   { key: "volume", label: "거래량" },
+  { key: "market_cap", label: "시가총액" },
   { key: "change", label: "급등" },
+  { key: "decline", label: "급락" },
 ];
 
 const TITLES: Record<string, string> = {
@@ -52,6 +55,9 @@ export default function PopularDetailPage({
   const [sort, setSort] = useState<Sort>("value");
   // 대시보드/상세 페이지와 동일한 USD/KRW 토글 (localStorage 공유)
   const [showKrw, setShowKrw] = useUsdToKrw();
+  const sortsForMarket = SORTS.filter(
+    (s) => !(market === "UPBIT" && s.key === "market_cap")
+  );
 
   const { data, isLoading } = useSWR<Row[]>(
     `/market/popular?market=${market}&sort=${sort}&limit=100`,
@@ -80,8 +86,8 @@ export default function PopularDetailPage({
             {TITLES[market] || "인기 종목"}
           </h1>
         </div>
-        <div className="flex gap-1">
-          {SORTS.map((s) => (
+        <div className="flex flex-wrap gap-1">
+          {sortsForMarket.map((s) => (
             <button
               key={s.key}
               onClick={() => setSort(s.key)}
@@ -159,6 +165,8 @@ export default function PopularDetailPage({
                         {r.market} · {r.code} ·{" "}
                         {sort === "volume"
                           ? `거래량 ${fmtCompact(r.volume)}`
+                          : sort === "market_cap"
+                          ? `시총 ${fmtCompact(r.market_cap)}`
                           : `거래대금 ${fmtCompact(r.value)}`}
                       </div>
                     </div>

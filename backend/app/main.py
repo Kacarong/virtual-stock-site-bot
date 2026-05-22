@@ -57,8 +57,9 @@ async def on_startup() -> None:
     except Exception as e:
         logger.warning("startup seed sync failed: {}", e)
 
-    # 인기 종목 워밍업 — 첫 사용자 입장 전에 캐시 채워 둠
+    # 인기 종목 + 차트 히스토리 워밍업
     import asyncio as _aio
+    from .services.history import get_history as _get_history
     from .services.popular import popular as _popular
 
     async def _warmup() -> None:
@@ -72,6 +73,18 @@ async def on_startup() -> None:
             logger.info("popular warmup done")
         except Exception as e:
             logger.warning("popular warmup failed: {}", e)
+
+        # 인기 상위 10종목의 일봉 히스토리도 미리 적재 (차트 첫 진입 빠르게)
+        try:
+            top: list[tuple[str, str]] = []
+            for m in ("KRX", "US", "UPBIT"):
+                rows = await _popular(m, "value", 10)
+                top.extend([(r["market"], r["code"]) for r in rows[:10]])
+            tasks = [_get_history(mk, cd, "1d") for mk, cd in top]
+            await _aio.gather(*tasks, return_exceptions=True)
+            logger.info("history warmup done: {} symbols", len(top))
+        except Exception as e:
+            logger.warning("history warmup failed: {}", e)
 
     _aio.create_task(_warmup())
 

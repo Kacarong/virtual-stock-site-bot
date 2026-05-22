@@ -2,7 +2,9 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { useState } from "react";
 import useSWR from "swr";
+import { FxModal } from "@/components/FxModal";
 import { MarketStatusBar } from "@/components/MarketStatusBar";
 import { PopularBoard } from "@/components/PopularBoard";
 import { SearchBox } from "@/components/SearchBox";
@@ -89,7 +91,8 @@ function HoldingsGroup({ title, items }: { title: string; items: Holding[] }) {
 
 export default function Home() {
   const router = useRouter();
-  const { data, error, isLoading } = useSWR<Portfolio>("/portfolio", fetcher, {
+  const [fxOpen, setFxOpen] = useState(false);
+  const { data, error, isLoading, mutate } = useSWR<Portfolio>("/portfolio", fetcher, {
     refreshInterval: 5000,
   });
 
@@ -132,11 +135,31 @@ export default function Home() {
           <p className="mt-1 text-xl font-bold">{fmtKRW(data.cash_krw)}</p>
         </div>
         <div className="rounded-2xl bg-white p-5 shadow-sm">
-          <p className="text-xs text-ink-3">현금 (달러)</p>
-          <p className="mt-1 text-xl font-bold">{fmtUSD(data.cash_usd)}</p>
-          <p className="mt-1 text-xs text-ink-3">USD/KRW {fmtNum(data.usdkrw, 1)}</p>
+          <div className="flex items-start justify-between">
+            <div>
+              <p className="text-xs text-ink-3">현금 (달러)</p>
+              <p className="mt-1 text-xl font-bold">{fmtUSD(data.cash_usd)}</p>
+              <p className="mt-1 text-xs text-ink-3">USD/KRW {fmtNum(data.usdkrw, 1)}</p>
+            </div>
+            <button
+              onClick={() => setFxOpen(true)}
+              className="rounded-full bg-brand/10 px-3 py-1 text-[11px] font-semibold text-brand hover:bg-brand/20"
+            >
+              환전
+            </button>
+          </div>
         </div>
       </div>
+
+      {fxOpen && (
+        <FxModal
+          cashKrw={data.cash_krw}
+          cashUsd={data.cash_usd}
+          rate={Number(data.usdkrw)}
+          onClose={() => setFxOpen(false)}
+          onDone={() => mutate()}
+        />
+      )}
 
       {/* 실시간 인기 */}
       <PopularBoard />

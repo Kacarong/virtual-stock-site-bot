@@ -214,13 +214,14 @@ async def history(market: str, code: str, interval: str = "1d") -> list[dict]:
 @router.get("/popular")
 async def popular(
     market: str = Query(..., pattern="^(KRX|US|UPBIT)$"),
-    sort: str = Query("value", pattern="^(value|volume|change)$"),
+    sort: str = Query("value", pattern="^(value|volume|change|decline|market_cap)$"),
     limit: int = Query(30, ge=1, le=100),
 ) -> list[dict]:
     """시장별 인기종목.
 
     - market: KRX(국내) / US(해외) / UPBIT(코인)
-    - sort:   value(거래대금) / volume(거래량) / change(등락률)
+    - sort:   value(거래대금) / volume(거래량) / change(급등) /
+              decline(급락) / market_cap(시가총액)
     """
     return await popular_svc(market, sort, limit)  # type: ignore
 

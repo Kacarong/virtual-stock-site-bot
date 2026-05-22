@@ -154,12 +154,43 @@ async def _upbit_history(code: str, interval: Interval) -> list[dict]:
     return _upbit_normalize(rows)
 
 
+async def _race(*coros) -> list[dict]:
+    """여러 소스를 동시에 호출 → 가장 먼저 유효한 결과(빈 리스트 아닌)를 반환.
+
+    실패/빈 결과는 무시하고 다음을 기다림. 모두 실패하면 [].
+    중간에 결과가 오면 나머지는 취소.
+    """
+    tasks = [asyncio.ensure_future(c) for c in coros]
+    try:
+        while tasks:
+            done, pending = await asyncio.wait(
+                tasks, return_when=asyncio.FIRST_COMPLETED
+            )
+            for d in done:
+                tasks.remove(d)
+                try:
+                    rows = d.result()
+                except Exception:
+                    rows = []
+                if rows:
+                    # 나머지 취소
+                    for p in tasks:
+                        p.cancel()
+                    return rows
+        return []
+    finally:
+        for t in tasks:
+            if not t.done():
+                t.cancel()
+
+
 async def _krx_history(code: str, interval: Interval) -> list[dict]:
     # 주봉/월봉/전체: 일봉 받아서 집계
     if interval in ("1w", "1mo", "all"):
-        rows = await _kis.fetch_daily_candles(code, count=100)
-        if not rows:
-            rows = await _yf_history("KRX", code, "max" if interval == "all" else "5y", "1d")
+        rows = await _race(
+            _kis.fetch_daily_candles(code, count=100),
+            _yf_history("KRX", code, "max" if interval == "all" else "5y", "1d"),
+        )
         if not rows:
             return []
         if interval == "1w":
@@ -167,31 +198,30 @@ async def _krx_history(code: str, interval: Interval) -> list[dict]:
         if interval == "1mo":
             return _aggregate(rows, "M")
         return rows  # all = 일봉 전체
-    # KIS 우선
+    # 일/분: KIS와 yfinance 동시 호출 → 먼저 도착하는 거 사용
     if interval == "1d":
-        rows = await _kis.fetch_daily_candles(code, count=180)
-        if rows:
-            return rows
-    elif interval == "1m":
-        rows = await _kis.fetch_minute_candles(code, count=200)
-        if rows:
-            return rows
-    # 그 외(5m/1h) 또는 KIS 실패 → yfinance fallback
-    period_map = {"1m": "5d", "5m": "5d", "1h": "1mo", "1d": "6mo"}
-    yf_interval = {"1m": "1m", "5m": "5m", "1h": "60m", "1d": "1d"}[interval]
+        return await _race(
+            _kis.fetch_daily_candles(code, count=180),
+            _yf_history("KRX", code, "6mo", "1d"),
+        )
+    if interval == "1m":
+        return await _race(
+            _kis.fetch_minute_candles(code, count=200),
+            _yf_history("KRX", code, "5d", "1m"),
+        )
+    period_map = {"5m": "5d", "1h": "1mo"}
+    yf_interval = {"5m": "5m", "1h": "60m"}[interval]
     return await _yf_history("KRX", code, period_map[interval], yf_interval)
 
 
 async def _us_history(market: str, code: str, interval: Interval) -> list[dict]:
     # 주봉/월봉/전체: 일봉 받아서 집계
     if interval in ("1w", "1mo", "all"):
-        rows = await _kis.fetch_overseas_daily_candles(code, market, count=100)
-        if not rows:
-            rows = await _stooq.fetch_history(code, count=2000)
-        if not rows:
-            rows = await _yf_history(
-                market, code, "max" if interval == "all" else "5y", "1d"
-            )
+        rows = await _race(
+            _kis.fetch_overseas_daily_candles(code, market, count=100),
+            _stooq.fetch_history(code, count=2000),
+            _yf_history(market, code, "max" if interval == "all" else "5y", "1d"),
+        )
         if not rows:
             return []
         if interval == "1w":
@@ -199,16 +229,15 @@ async def _us_history(market: str, code: str, interval: Interval) -> list[dict]:
         if interval == "1mo":
             return _aggregate(rows, "M")
         return rows
-    # 1d: KIS 해외주식(real 키) → Stooq → yfinance
+    # 1d: 3개 소스 race
     if interval == "1d":
-        rows = await _kis.fetch_overseas_daily_candles(code, market, count=180)
-        if rows:
-            return rows
-        rows = await _stooq.fetch_history(code, count=180)
-        if rows:
-            return rows
-    period_map = {"1m": "5d", "5m": "5d", "1h": "1mo", "1d": "6mo"}
-    yf_interval = {"1m": "1m", "5m": "5m", "1h": "60m", "1d": "1d"}[interval]
+        return await _race(
+            _kis.fetch_overseas_daily_candles(code, market, count=180),
+            _stooq.fetch_history(code, count=180),
+            _yf_history(market, code, "6mo", "1d"),
+        )
+    period_map = {"1m": "5d", "5m": "5d", "1h": "1mo"}
+    yf_interval = {"1m": "1m", "5m": "5m", "1h": "60m"}[interval]
     return await _yf_history(market, code, period_map[interval], yf_interval)
 
 
@@ -275,7 +304,7 @@ def _spawn_hist_refresh(market: str, code: str, interval: Interval) -> None:
 
 
 async def get_history(
-    market: str, code: str, interval: Interval = "1d", *, max_wait: float = 4.0
+    market: str, code: str, interval: Interval = "1d", *, max_wait: float = 2.5
 ) -> list[dict]:
     """차트 히스토리 — stale-while-revalidate 캐시.
 

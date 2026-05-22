@@ -14,14 +14,17 @@ type Row = {
   change_pct: number | null;
   volume: number | null;
   value: number | null;
+  market_cap?: number | null;
 };
 
-type Sort = "value" | "volume" | "change";
+type Sort = "value" | "volume" | "change" | "decline" | "market_cap";
 
 const SORTS: { key: Sort; label: string }[] = [
   { key: "value", label: "거래대금" },
   { key: "volume", label: "거래량" },
+  { key: "market_cap", label: "시가총액" },
   { key: "change", label: "급등" },
+  { key: "decline", label: "급락" },
 ];
 
 const fetcher = (u: string) => api(u);
@@ -49,6 +52,10 @@ function PopularPanel({
   const [sort, setSort] = useState<Sort>("value");
   // 해외주식만 USD/KRW 토글 (페이지 간 공유)
   const [showKrw, setShowKrw] = useUsdToKrw();
+  // UPBIT는 시가총액 미지원 → 옵션에서 제외
+  const sortsForMarket = SORTS.filter(
+    (s) => !(market === "UPBIT" && s.key === "market_cap")
+  );
 
   const { data, isLoading, error } = useSWR<Row[]>(
     `/market/popular?market=${market}&sort=${sort}&limit=10`,
@@ -68,12 +75,12 @@ function PopularPanel({
     <div className="flex flex-col rounded-3xl bg-white shadow-sm">
       <div className="flex items-center justify-between border-b border-bg-3 px-5 py-3">
         <h3 className="font-semibold">{title}</h3>
-        <div className="flex gap-1">
-          {SORTS.map((s) => (
+        <div className="flex flex-wrap justify-end gap-1">
+          {sortsForMarket.map((s) => (
             <button
               key={s.key}
               onClick={() => setSort(s.key)}
-              className={`rounded-full px-2.5 py-1 text-xs ${
+              className={`rounded-full px-2 py-1 text-[11px] ${
                 sort === s.key
                   ? "bg-ink-1 text-white"
                   : "bg-bg-2 text-ink-3 hover:bg-bg-3"
@@ -152,6 +159,8 @@ function PopularPanel({
                       <div className="text-[11px] text-ink-3">
                         {sort === "volume"
                           ? fmtCompact(volNum)
+                          : sort === "market_cap"
+                          ? fmtCompact(r.market_cap)
                           : fmtCompact(valNum)}
                       </div>
                     </div>
