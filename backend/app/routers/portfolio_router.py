@@ -1,16 +1,18 @@
 """포트폴리오 / 자산 요약."""
 from __future__ import annotations
 
+from collections import defaultdict
+from datetime import datetime, timedelta
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
 from sqlalchemy import func as sa_func
 
 from ..auth import current_user
 from ..db import get_db
-from ..models import Holding, Price, Symbol, User
+from ..models import Holding, Order, Price, Symbol, Trade, User
 from ..services.fx import get_usdkrw
 
 router = APIRouter(prefix="/portfolio", tags=["portfolio"])
@@ -136,3 +138,85 @@ async def portfolio(
             "total_assets_krw": str(total_assets_krw),
         },
     }
+
+
+# --- 실현손익 ---------------------------------------------------------
+
+@router.get("/realized")
+async def realized(
+    period: str = Query("all", pattern="^(all|daily|monthly)$"),
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """매도 시점의 실현 손익 합계.
+
+    각 사용자의 (BUY/SELL) 체결을 시간순으로 재생:
+    - BUY: qty 누적 + 가중평균 단가 업데이트
+    - SELL: 실현 PnL = (체결가 - avg_cost) * qty - fee - tax
+    - 매도 후 잔여 qty=0이면 avg_cost 리셋
+
+    period=all: 단일 합계
+    period=daily: 일별 버킷 (최근 365일)
+    period=monthly: 월별 버킷
+    """
+    rate = await get_usdkrw()
+
+    # 사용자 주문 + 체결 시간순 조회
+    rows = (
+        db.query(Trade, Order, Symbol)
+        .join(Order, Order.id == Trade.order_id)
+        .join(Symbol, Symbol.id == Order.symbol_id)
+        .filter(Order.user_id == user.id)
+        .order_by(Trade.executed_at.asc())
+        .all()
+    )
+
+    # symbol_id → {qty, avg_cost}
+    state: dict[int, dict] = defaultdict(lambda: {"qty": Decimal("0"), "avg": Decimal("0")})
+    buckets: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
+    total = Decimal("0")
+
+    def bucket_key(dt: datetime) -> str:
+        if period == "daily":
+            return dt.strftime("%Y-%m-%d")
+        if period == "monthly":
+            return dt.strftime("%Y-%m")
+        return "all"
+
+    for t, o, s in rows:
+        st = state[s.id]
+        price = t.price
+        qty = t.qty
+        if o.side == "BUY":
+            new_qty = st["qty"] + qty
+            if new_qty > 0:
+                st["avg"] = (st["avg"] * st["qty"] + price * qty) / new_qty
+            st["qty"] = new_qty
+        else:  # SELL
+            avg = st["avg"]
+            pnl_native = (price - avg) * qty - (t.fee or Decimal("0")) - (t.tax or Decimal("0"))
+            # KRW 환산 (USD는 현재 환율 사용 — 과거 환율 데이터 없음)
+            pnl_krw = pnl_native * rate if s.currency == "USD" else pnl_native
+            buckets[bucket_key(t.executed_at)] += pnl_krw
+            total += pnl_krw
+            st["qty"] -= qty
+            if st["qty"] <= 0:
+                st["qty"] = Decimal("0")
+                st["avg"] = Decimal("0")
+
+    if period == "all":
+        return {"period": "all", "total_krw": str(total), "items": []}
+
+    # 일별/월별 — 최근 결과 위로 정렬
+    cutoff = None
+    if period == "daily":
+        cutoff = (datetime.utcnow() - timedelta(days=365)).strftime("%Y-%m-%d")
+    elif period == "monthly":
+        cutoff = (datetime.utcnow() - timedelta(days=365 * 3)).strftime("%Y-%m")
+
+    items = [
+        {"bucket": k, "realized_krw": str(v)}
+        for k, v in sorted(buckets.items(), reverse=True)
+        if cutoff is None or k >= cutoff
+    ]
+    return {"period": period, "total_krw": str(total), "items": items}

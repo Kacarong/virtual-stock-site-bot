@@ -22,6 +22,7 @@ type Candle = {
   high: number;
   low: number;
   close: number;
+  volume?: number;
 };
 
 type MarketStatus = {
@@ -83,12 +84,16 @@ export default function SymbolPage({
   // 미국주식 원화 보기 토글 (대시보드와 공유)
   const isUS = market === "NASDAQ" || market === "NYSE" || market === "AMEX";
   const [showKrw, setShowKrw] = useUsdToKrw();
-  const { data: fx } = useSWR<{ usdkrw: string }>(
-    isUS ? "/portfolio" : null,
-    fetcher,
-    { refreshInterval: 60000 }
+  // 포트폴리오 — 환율 + 현재 종목 보유 수량(전량매도용)
+  const { data: pf } = useSWR<{
+    usdkrw: string;
+    holdings: { symbol_id: number; code: string; market: string; qty: string }[];
+  }>("/portfolio", fetcher, { refreshInterval: 10000 });
+  const rate = pf?.usdkrw ? Number(pf.usdkrw) : null;
+  const myHolding = pf?.holdings?.find(
+    (h) => h.market === market && h.code === code
   );
-  const rate = fx?.usdkrw ? Number(fx.usdkrw) : null;
+  const holdingQty = myHolding ? Number(myHolding.qty) : 0;
 
   useEffect(() => {
     if (q?.price && !limitPrice) setLimitPrice(q.price);
@@ -289,6 +294,23 @@ export default function SymbolPage({
             </button>
           ))}
         </div>
+
+        {holdingQty > 0 && (
+          <div className="mt-3 flex items-center justify-between rounded-xl bg-bg-2 px-4 py-2 text-xs">
+            <span className="text-ink-3">
+              보유 {fmtQty(holdingQty, market)}주
+            </span>
+            <button
+              onClick={() => {
+                setSide("SELL");
+                setQty(String(holdingQty));
+              }}
+              className="rounded-lg bg-down px-3 py-1 font-semibold text-white"
+            >
+              전량매도
+            </button>
+          </div>
+        )}
 
         <div className="mt-4 flex gap-2">
           {(
