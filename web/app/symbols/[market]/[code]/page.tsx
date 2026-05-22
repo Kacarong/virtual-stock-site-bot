@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { Chart } from "@/components/Chart";
+import { FxModal } from "@/components/FxModal";
 import { api, fmtPrice, fmtQty, pctClass } from "@/lib/api";
 import { useUsdToKrw } from "@/lib/useUsdToKrw";
 
@@ -68,6 +69,11 @@ export default function SymbolPage({
   const { data: mstatus } = useSWR<MarketStatus>("/market/status", fetcher, {
     refreshInterval: 60000,
   });
+  const { data: watchlist, mutate: mutateWatch } = useSWR<any[]>(
+    "/watchlist",
+    fetcher,
+    { refreshInterval: 30000 }
+  );
   const sym = hits?.find((h: any) => h.market === market && h.code === code);
   const isOpen = mstatus?.[market]?.open ?? (market === "UPBIT");
   const nextOpen = mstatus?.[market]?.next_open;
@@ -84,9 +90,12 @@ export default function SymbolPage({
   // 미국주식 원화 보기 토글 (대시보드와 공유)
   const isUS = market === "NASDAQ" || market === "NYSE" || market === "AMEX";
   const [showKrw, setShowKrw] = useUsdToKrw();
-  // 포트폴리오 — 환율 + 현재 종목 보유 수량(전량매도용)
-  const { data: pf } = useSWR<{
+  const [fxOpen, setFxOpen] = useState(false);
+  // 포트폴리오 — 환율 + 현재 종목 보유 수량(전량매도용) + 현금 잔액
+  const { data: pf, mutate: mutatePf } = useSWR<{
     usdkrw: string;
+    cash_krw: string;
+    cash_usd: string;
     holdings: { symbol_id: number; code: string; market: string; qty: string }[];
   }>("/portfolio", fetcher, { refreshInterval: 10000 });
   const rate = pf?.usdkrw ? Number(pf.usdkrw) : null;
@@ -143,11 +152,27 @@ export default function SymbolPage({
     }
   }
 
-  async function watchAdd() {
-    const symbolId = q?.symbol_id ?? sym?.id;
-    if (!symbolId) return;
-    await api(`/watchlist/${symbolId}`, { method: "POST" });
-    setMsg("관심종목에 추가됨");
+  const symbolIdAny = q?.symbol_id ?? sym?.id;
+  const isWatched = !!(
+    symbolIdAny && watchlist?.find((w: any) => w.symbol_id === symbolIdAny)
+  );
+
+  async function toggleWatch() {
+    if (!symbolIdAny) return;
+    setMsg(null);
+    setErr(null);
+    try {
+      if (isWatched) {
+        await api(`/watchlist/${symbolIdAny}`, { method: "DELETE" });
+        setMsg("관심종목에서 제거됨");
+      } else {
+        await api(`/watchlist/${symbolIdAny}`, { method: "POST" });
+        setMsg("관심종목에 추가됨 ⭐");
+      }
+      mutateWatch();
+    } catch (e: any) {
+      setErr(e.message);
+    }
   }
 
   const price = q?.price ? Number(q.price) : null;
@@ -187,24 +212,32 @@ export default function SymbolPage({
                 {isOpen ? "● 거래가능" : "● 거래불가"}
               </span>
               {isUS && rate && (
-                <div className="flex gap-0.5">
+                <>
+                  <div className="flex gap-0.5">
+                    <button
+                      onClick={() => setShowKrw(false)}
+                      className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                        !showKrw ? "bg-ink-1 text-white" : "bg-bg-2 text-ink-3"
+                      }`}
+                    >
+                      $
+                    </button>
+                    <button
+                      onClick={() => setShowKrw(true)}
+                      className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                        showKrw ? "bg-ink-1 text-white" : "bg-bg-2 text-ink-3"
+                      }`}
+                    >
+                      ₩
+                    </button>
+                  </div>
                   <button
-                    onClick={() => setShowKrw(false)}
-                    className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                      !showKrw ? "bg-ink-1 text-white" : "bg-bg-2 text-ink-3"
-                    }`}
+                    onClick={() => setFxOpen(true)}
+                    className="rounded-full bg-brand/10 px-2.5 py-0.5 text-[10px] font-semibold text-brand hover:bg-brand/20"
                   >
-                    $
+                    환전
                   </button>
-                  <button
-                    onClick={() => setShowKrw(true)}
-                    className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                      showKrw ? "bg-ink-1 text-white" : "bg-bg-2 text-ink-3"
-                    }`}
-                  >
-                    ₩
-                  </button>
-                </div>
+                </>
               )}
             </div>
             {price !== null && (
@@ -233,10 +266,15 @@ export default function SymbolPage({
             )}
           </div>
           <button
-            onClick={watchAdd}
-            className="rounded-xl border border-bg-3 px-3 py-1.5 text-sm hover:bg-bg-2"
+            onClick={toggleWatch}
+            title={isWatched ? "관심종목에서 제거" : "관심종목에 추가"}
+            className={`rounded-xl border px-3 py-1.5 text-sm transition ${
+              isWatched
+                ? "border-yellow-300 bg-yellow-50 text-yellow-700"
+                : "border-bg-3 hover:bg-bg-2 text-ink-2"
+            }`}
           >
-            ★ 관심 추가
+            {isWatched ? "★ 관심 등록됨" : "☆ 관심 추가"}
           </button>
         </div>
 
@@ -257,7 +295,22 @@ export default function SymbolPage({
             ))}
           </div>
           {candles && candles.length > 0 ? (
-            <Chart data={candles} />
+            <Chart
+              data={candles}
+              priceScale={isUS && showKrw && rate ? rate : 1}
+              unitLabel={
+                isUS
+                  ? showKrw && rate
+                    ? "원"
+                    : "달러"
+                  : market === "UPBIT" || market === "KRX"
+                  ? "원"
+                  : undefined
+              }
+              integerOnly={
+                market === "KRX" || (isUS && showKrw && !!rate)
+              }
+            />
           ) : (
             <div className="grid h-[360px] place-items-center text-sm text-ink-3">
               차트 데이터를 불러오는 중…
@@ -377,6 +430,16 @@ export default function SymbolPage({
           <p className="mt-3 rounded bg-red-50 p-3 text-xs text-red-700">{err}</p>
         )}
       </div>
+
+      {fxOpen && pf && rate && (
+        <FxModal
+          cashKrw={pf.cash_krw}
+          cashUsd={pf.cash_usd}
+          rate={rate}
+          onClose={() => setFxOpen(false)}
+          onDone={() => mutatePf()}
+        />
+      )}
     </div>
   );
 }

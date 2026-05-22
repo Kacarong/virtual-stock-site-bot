@@ -16,7 +16,17 @@ type Candle = {
   volume?: number;
 };
 
-export function Chart({ data }: { data: Candle[] }) {
+type Props = {
+  data: Candle[];
+  /** 가격 배수 — USD 캔들을 KRW로 표시할 때 환율 등을 곱함. 기본 1 */
+  priceScale?: number;
+  /** 가격 단위 표기 ("원" / "달러" 등). 없으면 단위 없이 숫자만 표기 */
+  unitLabel?: string;
+  /** KRW 모드: 정수 + ","; USD 모드: 소수점 2자리. 기본 auto */
+  integerOnly?: boolean;
+};
+
+export function Chart({ data, priceScale = 1, unitLabel, integerOnly }: Props) {
   const ref = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
 
@@ -41,12 +51,18 @@ export function Chart({ data }: { data: Candle[] }) {
       localization: {
         priceFormatter: (p: number) => {
           if (!isFinite(p)) return "-";
-          const abs = Math.abs(p);
-          const digits = abs >= 1000 ? 0 : abs >= 1 ? 2 : 4;
-          return p.toLocaleString(undefined, {
-            minimumFractionDigits: 0,
-            maximumFractionDigits: digits,
-          });
+          let s: string;
+          if (integerOnly) {
+            s = Math.round(p).toLocaleString();
+          } else {
+            const abs = Math.abs(p);
+            const digits = abs >= 1000 ? 0 : abs >= 1 ? 2 : 4;
+            s = p.toLocaleString(undefined, {
+              minimumFractionDigits: 0,
+              maximumFractionDigits: digits,
+            });
+          }
+          return unitLabel ? `${s} ${unitLabel}` : s;
         },
       },
     });
@@ -60,7 +76,15 @@ export function Chart({ data }: { data: Candle[] }) {
       wickDownColor: "#3182F6",
       borderVisible: false,
     });
-    candle.setData(data as any);
+    candle.setData(
+      data.map((d) => ({
+        time: d.time as any,
+        open: d.open * priceScale,
+        high: d.high * priceScale,
+        low: d.low * priceScale,
+        close: d.close * priceScale,
+      })) as any
+    );
 
     // 거래량 막대 (오버레이 — 화면 하단 25% 차지)
     const hasVolume = data.some((d) => d.volume && d.volume > 0);
@@ -88,7 +112,7 @@ export function Chart({ data }: { data: Candle[] }) {
       chart.remove();
       chartRef.current = null;
     };
-  }, [data]);
+  }, [data, priceScale, unitLabel, integerOnly]);
 
   return <div ref={ref} className="h-[420px] w-full" />;
 }

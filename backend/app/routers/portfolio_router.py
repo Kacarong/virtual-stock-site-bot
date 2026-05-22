@@ -4,18 +4,85 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import datetime, timedelta
 from decimal import Decimal
+from typing import Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from sqlalchemy import func as sa_func
 
 from ..auth import current_user
 from ..db import get_db
-from ..models import Holding, Order, Price, Symbol, Trade, User
+from ..models import CashLedger, Holding, Order, Price, Symbol, Trade, User
+from ..services.fees import FX_SPREAD, fx_buy_usd, fx_sell_usd, quantize_money
 from ..services.fx import get_usdkrw
 
 router = APIRouter(prefix="/portfolio", tags=["portfolio"])
+
+
+# --- 환전 ------------------------------------------------------------
+
+class FxSwapBody(BaseModel):
+    direction: Literal["KRW_TO_USD", "USD_TO_KRW"]
+    amount: Decimal = Field(gt=0)  # 출금 통화 기준 금액
+
+
+@router.post("/fx")
+async def fx_swap(
+    body: FxSwapBody,
+    user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """원화↔달러 환전. 스프레드 1% (실거래 엔진과 동일)."""
+    rate = await get_usdkrw()
+    amt = quantize_money(body.amount)
+
+    if body.direction == "KRW_TO_USD":
+        if user.cash_krw < amt:
+            raise HTTPException(400, "환전할 원화가 부족합니다.")
+        recv_usd = fx_buy_usd(amt, rate)
+        if recv_usd <= 0:
+            raise HTTPException(400, "환전 금액이 너무 작습니다.")
+        user.cash_krw = quantize_money(user.cash_krw - amt)
+        user.cash_usd = quantize_money(user.cash_usd + recv_usd)
+        db.add(CashLedger(user_id=user.id, currency="KRW", amount=-amt, reason="FX",
+                          memo=f"환전 → USD {recv_usd}"))
+        db.add(CashLedger(user_id=user.id, currency="USD", amount=recv_usd, reason="FX",
+                          memo=f"환전 ← KRW {amt}"))
+        db.commit()
+        return {
+            "direction": body.direction,
+            "rate": str(rate),
+            "spread": str(FX_SPREAD),
+            "paid_krw": str(amt),
+            "received_usd": str(recv_usd),
+            "cash_krw": str(user.cash_krw),
+            "cash_usd": str(user.cash_usd),
+        }
+
+    # USD_TO_KRW
+    if user.cash_usd < amt:
+        raise HTTPException(400, "환전할 달러가 부족합니다.")
+    recv_krw = fx_sell_usd(amt, rate)
+    if recv_krw <= 0:
+        raise HTTPException(400, "환전 금액이 너무 작습니다.")
+    user.cash_usd = quantize_money(user.cash_usd - amt)
+    user.cash_krw = quantize_money(user.cash_krw + recv_krw)
+    db.add(CashLedger(user_id=user.id, currency="USD", amount=-amt, reason="FX",
+                      memo=f"환전 → KRW {recv_krw}"))
+    db.add(CashLedger(user_id=user.id, currency="KRW", amount=recv_krw, reason="FX",
+                      memo=f"환전 ← USD {amt}"))
+    db.commit()
+    return {
+        "direction": body.direction,
+        "rate": str(rate),
+        "spread": str(FX_SPREAD),
+        "paid_usd": str(amt),
+        "received_krw": str(recv_krw),
+        "cash_krw": str(user.cash_krw),
+        "cash_usd": str(user.cash_usd),
+    }
 
 
 @router.get("/ranking")

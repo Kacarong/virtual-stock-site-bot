@@ -17,6 +17,26 @@ from ..services.engine import OrderError, cancel_order, place_order
 router = APIRouter(prefix="/orders", tags=["orders"])
 
 
+# 영문 OrderError 메시지 → 한글
+_ERR_KO = {
+    "insufficient holding": "해당 종목을 보유하고 있지 않습니다.",
+    "insufficient cash": "잔액이 부족합니다.",
+    "insufficient KRW for FX": "환전할 원화가 부족합니다.",
+    "symbol not found": "종목을 찾을 수 없습니다.",
+    "side must be BUY or SELL": "주문 방향이 잘못되었습니다.",
+    "invalid order_type": "주문 유형이 잘못되었습니다.",
+    "qty must be positive": "수량은 0보다 커야 합니다.",
+    "limit_price required for LIMIT": "지정가 주문에는 가격이 필요합니다.",
+    "scheduled_at required for SCHEDULED": "예약 시각이 필요합니다.",
+    "order not found": "주문을 찾을 수 없습니다.",
+}
+
+
+def _ko_error(e: Exception) -> str:
+    msg = str(e)
+    return _ERR_KO.get(msg, msg)
+
+
 class OrderCreate(BaseModel):
     symbol_id: int
     side: Literal["BUY", "SELL"]
@@ -64,7 +84,7 @@ async def create(
             scheduled_at=body.scheduled_at,
         )
     except OrderError as e:
-        raise HTTPException(400, str(e))
+        raise HTTPException(400, _ko_error(e))
     sym = db.get(Symbol, order.symbol_id)
     return _serialize(order, sym)
 
@@ -96,7 +116,7 @@ def cancel(
     try:
         o = cancel_order(db, user=user, order_id=order_id)
     except OrderError as e:
-        raise HTTPException(400, str(e))
+        raise HTTPException(400, _ko_error(e))
     sym = db.get(Symbol, o.symbol_id)
     return _serialize(o, sym)
 

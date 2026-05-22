@@ -177,12 +177,30 @@ async def quote(market: str, code: str, db: Session = Depends(get_db)) -> dict:
 
 @router.get("/status")
 def status() -> dict:
+    """시장별 개장 여부 + 운영 시간 (현지 + 한국 시간 환산)."""
+    from datetime import datetime
+    from ..services.market_calendar import HOURS, KST
+
     out = {}
     for m in ("KRX", "NASDAQ", "NYSE", "UPBIT"):
-        out[m] = {
+        info: dict = {
             "open": is_market_open(m),
             "next_open": next_open(m).isoformat() if m != "UPBIT" else None,
         }
+        if m == "UPBIT":
+            info["hours_local"] = "24시간"
+            info["hours_kst"] = "24시간"
+        elif m in HOURS:
+            open_t, close_t, tz = HOURS[m]
+            info["hours_local"] = f"{open_t.strftime('%H:%M')}~{close_t.strftime('%H:%M')}"
+            today_local = datetime.now(tz)
+            o = today_local.replace(hour=open_t.hour, minute=open_t.minute, second=0, microsecond=0).astimezone(KST)
+            c = today_local.replace(hour=close_t.hour, minute=close_t.minute, second=0, microsecond=0).astimezone(KST)
+            if c.day != o.day or c < o:
+                info["hours_kst"] = f"{o.strftime('%H:%M')}~익일 {c.strftime('%H:%M')}"
+            else:
+                info["hours_kst"] = f"{o.strftime('%H:%M')}~{c.strftime('%H:%M')}"
+        out[m] = info
     return out
 
 
