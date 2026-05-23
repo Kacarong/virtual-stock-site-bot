@@ -393,46 +393,59 @@ async def fetch_prices(codes: list[str]) -> dict[str, dict]:
 
 
 async def fetch_symbol_master_krx() -> list[dict]:
-    """KRX 종목 마스터 — pykrx로 받는다 (KIS API에는 마스터 다운로드 별도)."""
+    """KRX 종목 마스터 — pykrx로 받는다 (KIS API에는 마스터 다운로드 별도).
+
+    이름 조회는 종목당 1콜이라 느리다(2500개×~50ms ≈ 2분).
+    ThreadPoolExecutor 50개로 병렬화해 ~10초 안에 끝낸다.
+    """
     def _fetch() -> list[dict]:
         try:
+            import concurrent.futures as _cf
+
             from pykrx import stock  # type: ignore
 
-            out: list[dict] = []
+            jobs: list[tuple[str, str, str]] = []  # (market_name, code, asset_type)
             for mk in ("KOSPI", "KOSDAQ"):
-                tickers = stock.get_market_ticker_list(market=mk)
+                try:
+                    tickers = stock.get_market_ticker_list(market=mk)
+                except Exception as e:
+                    logger.warning("pykrx ticker list {} fail: {}", mk, e)
+                    tickers = []
                 for code in tickers:
-                    try:
-                        name = stock.get_market_ticker_name(code)
-                        out.append(
-                            {
-                                "code": code,
-                                "name": name,
-                                "market": "KRX",
-                                "asset_type": "STOCK",
-                                "currency": "KRW",
-                                "sector": mk,
-                            }
-                        )
-                    except Exception:
-                        continue
+                    jobs.append((mk, code, "STOCK"))
             # ETF
             try:
-                etf_tickers = stock.get_etf_ticker_list()
-                for code in etf_tickers:
-                    name = stock.get_etf_ticker_name(code)
-                    out.append(
-                        {
-                            "code": code,
-                            "name": name,
-                            "market": "KRX",
-                            "asset_type": "ETF",
-                            "currency": "KRW",
-                            "sector": "ETF",
-                        }
-                    )
+                for code in stock.get_etf_ticker_list():
+                    jobs.append(("ETF", code, "ETF"))
             except Exception as e:
                 logger.debug("pykrx ETF list skipped: {}", e)
+
+            def _one(job: tuple[str, str, str]) -> dict | None:
+                mk, code, asset_type = job
+                try:
+                    if asset_type == "ETF":
+                        name = stock.get_etf_ticker_name(code)
+                    else:
+                        name = stock.get_market_ticker_name(code)
+                    if not name:
+                        return None
+                    return {
+                        "code": code,
+                        "name": name,
+                        "market": "KRX",
+                        "asset_type": asset_type,
+                        "currency": "KRW",
+                        "sector": mk,
+                    }
+                except Exception:
+                    return None
+
+            out: list[dict] = []
+            with _cf.ThreadPoolExecutor(max_workers=50) as ex:
+                for r in ex.map(_one, jobs, timeout=180):
+                    if r:
+                        out.append(r)
+            logger.info("pykrx symbol master: jobs={} ok={}", len(jobs), len(out))
             return out
         except Exception as e:
             logger.warning("pykrx symbol master failed: {}", e)

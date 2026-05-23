@@ -13,6 +13,9 @@ from loguru import logger
 
 from ..db import SessionLocal
 from ..models import Price, Symbol
+from .sources import kis as _kis
+from .sources import stooq as _stooq
+from .sources import upbit as _upbit
 from .sources.kr_seeds import KR_SEEDS
 from .sources.us_seeds import US_SEEDS
 
@@ -261,8 +264,73 @@ def _name_lookup() -> dict[tuple[str, str], str]:
     return out
 
 
+async def _fetch_live_quotes(
+    krx: list[str], us: list[tuple[str, str]], upbit: list[str]
+) -> dict[tuple[str, str], dict]:
+    """누락된 종목들에 대해 실시간 가격 batch 조회.
+
+    KRX: Stooq KR 폴백 (가장 빠름) → KIS (있으면)
+    US: Stooq → (없으면 yfinance 생략, 인기 워밍업으로 대부분 채워짐)
+    UPBIT: 공식 API (빠름)
+    """
+    out: dict[tuple[str, str], dict] = {}
+
+    async def _krx_path() -> None:
+        if not krx:
+            return
+        try:
+            # KIS가 설정돼 있으면 우선 시도
+            if _kis._configured():
+                try:
+                    q = await asyncio.wait_for(_kis.fetch_prices(krx), timeout=8.0)
+                    for code, info in q.items():
+                        if info:
+                            out[("KRX", code)] = info
+                except asyncio.TimeoutError:
+                    pass
+            missing = [c for c in krx if ("KRX", c) not in out]
+            if missing:
+                q = await asyncio.wait_for(_stooq.fetch_quotes_kr(missing), timeout=10.0)
+                for code, info in q.items():
+                    if info:
+                        out[("KRX", code)] = info
+        except Exception as e:
+            logger.warning("industries KRX fetch: {}", e)
+
+    async def _us_path() -> None:
+        if not us:
+            return
+        try:
+            codes_only = [c for _, c in us]
+            q = await asyncio.wait_for(_stooq.fetch_quotes(codes_only), timeout=10.0)
+            mkt_by = {c: m for m, c in us}
+            for code, info in q.items():
+                if info:
+                    out[(mkt_by.get(code, "NASDAQ"), code)] = info
+        except Exception as e:
+            logger.warning("industries US fetch: {}", e)
+
+    async def _upbit_path() -> None:
+        if not upbit:
+            return
+        try:
+            q = await asyncio.wait_for(_upbit.fetch_prices(upbit), timeout=6.0)
+            for code, info in q.items():
+                if info:
+                    out[("UPBIT", code)] = info
+        except Exception as e:
+            logger.warning("industries UPBIT fetch: {}", e)
+
+    await asyncio.gather(_krx_path(), _us_path(), _upbit_path(), return_exceptions=True)
+    return out
+
+
 async def industries() -> list[dict]:
-    """업종별 종목 + 현재가 (DB 캐시 기준). 60s 캐시."""
+    """업종별 종목 + 현재가. 60s 캐시.
+
+    1) DB Price 있으면 그 값 사용
+    2) 누락된 종목은 실시간 batch 조회 후 Price DB에 upsert
+    """
     global _cache
     if _cache and (time.time() - _cache[0]) < _TTL:
         return _cache[1]
@@ -273,7 +341,6 @@ async def industries() -> list[dict]:
 
         db = SessionLocal()
         try:
-            codes = _all_codes()
             # Symbol + Price 조회
             sym_rows = (
                 db.query(Symbol, Price)
@@ -286,7 +353,97 @@ async def industries() -> list[dict]:
                 by_mc[(s.market, s.code)] = (s, p)
 
             name_by = _name_lookup()
-            # Upbit 이름은 DB(korean_name)에서 가져온다 — name_by에는 없음
+            for s, _ in sym_rows:
+                if s.market == "UPBIT":
+                    name_by[(s.market, s.code)] = s.name
+
+            # 가격 누락 종목 모으기 → 실시간 조회
+            need_krx: list[str] = []
+            need_us: list[tuple[str, str]] = []
+            need_upbit: list[str] = []
+            for _, _, group_codes in INDUSTRY_GROUPS:
+                for mkt, code in group_codes:
+                    sp = by_mc.get((mkt, code))
+                    has_price = sp is not None and sp[1] is not None
+                    if has_price:
+                        continue
+                    if mkt == "KRX" and code not in need_krx:
+                        need_krx.append(code)
+                    elif mkt in ("NASDAQ", "NYSE", "AMEX") and (mkt, code) not in need_us:
+                        need_us.append((mkt, code))
+                    elif mkt == "UPBIT" and code not in need_upbit:
+                        need_upbit.append(code)
+        finally:
+            db.close()
+
+        live = await _fetch_live_quotes(need_krx, need_us, need_upbit)
+
+        # 새로 받은 가격을 Price DB에 upsert
+        if live:
+            db = SessionLocal()
+            try:
+                from datetime import datetime as _dt
+                from decimal import Decimal as _Dec
+                for (mkt, code), info in live.items():
+                    sym = (
+                        db.query(Symbol)
+                        .filter(Symbol.market == mkt, Symbol.code == code)
+                        .first()
+                    )
+                    if not sym:
+                        # Symbol이 없으면 시드에서 이름 찾아 등록
+                        name = _name_lookup().get((mkt, code), code)
+                        asset_type = "CRYPTO" if mkt == "UPBIT" else "STOCK"
+                        currency = "USD" if mkt in ("NASDAQ", "NYSE", "AMEX") else "KRW"
+                        sym = Symbol(
+                            code=code, name=name, market=mkt,
+                            asset_type=asset_type, currency=currency,
+                            is_active=True,
+                        )
+                        db.add(sym)
+                        try:
+                            db.flush()
+                        except Exception:
+                            db.rollback()
+                            continue
+                    try:
+                        price_val = _Dec(str(info["price"]))
+                        prev_val = (
+                            _Dec(str(info["prev_close"]))
+                            if info.get("prev_close")
+                            else None
+                        )
+                    except Exception:
+                        continue
+                    existing = db.get(Price, sym.id)
+                    if existing:
+                        existing.price = price_val
+                        existing.prev_close = prev_val
+                        existing.ts = _dt.utcnow()
+                    else:
+                        db.add(Price(
+                            symbol_id=sym.id, price=price_val,
+                            prev_close=prev_val, ts=_dt.utcnow(),
+                        ))
+                try:
+                    db.commit()
+                except Exception as e:
+                    logger.warning("industries price upsert: {}", e)
+                    db.rollback()
+            finally:
+                db.close()
+
+        # 다시 읽어서 응답 만들기
+        db = SessionLocal()
+        try:
+            sym_rows = (
+                db.query(Symbol, Price)
+                .outerjoin(Price, Price.symbol_id == Symbol.id)
+                .filter(Symbol.is_active)
+                .all()
+            )
+            by_mc = {(s.market, s.code): (s, p) for s, p in sym_rows}
+            name_by = _name_lookup()
             for s, _ in sym_rows:
                 if s.market == "UPBIT":
                     name_by[(s.market, s.code)] = s.name
@@ -316,7 +473,6 @@ async def industries() -> list[dict]:
                             "change_pct": change_pct,
                         })
                     else:
-                        # DB에 없으면 이름만 표시 (가격 None)
                         items.append({
                             "symbol_id": None,
                             "market": mkt,
@@ -330,7 +486,6 @@ async def industries() -> list[dict]:
         finally:
             db.close()
 
-        # 비어 있는 결과는 캐시 안 함
         if any(g["items"] for g in out):
             _cache = (time.time(), out)
         return out

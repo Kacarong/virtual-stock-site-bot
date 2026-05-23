@@ -63,6 +63,15 @@ async def on_startup() -> None:
     from .services.popular import popular as _popular
 
     async def _warmup() -> None:
+        # KRX 전종목 마스터 동기화 (KOSPI+KOSDAQ 약 2500종목, 검색 풀세트 확보)
+        try:
+            from .services.symbol_sync import sync_krx as _sync_krx
+
+            n_krx_full = await _sync_krx()
+            logger.info("KRX full sync done: {} symbols", n_krx_full)
+        except Exception as e:
+            logger.warning("KRX full sync failed: {}", e)
+
         try:
             await _aio.gather(
                 _popular("KRX", "value", 30),

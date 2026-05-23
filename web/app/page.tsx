@@ -5,7 +5,6 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import useSWR from "swr";
 import { FxModal } from "@/components/FxModal";
-import { IndustryBoard } from "@/components/IndustryBoard";
 import { MarketStatusBar } from "@/components/MarketStatusBar";
 import { PopularBoard } from "@/components/PopularBoard";
 import { SearchBox } from "@/components/SearchBox";
@@ -128,9 +127,6 @@ export default function Home() {
     <div className="space-y-6">
       <MarketStatusBar />
       <SearchBox />
-
-      {/* 종류별 종목 — 업종/테마 큐레이션 (대시보드 최상단) */}
-      <IndustryBoard />
 
       {/* 총자산 카드 */}
       <div className="rounded-3xl bg-white p-6 shadow-sm">
