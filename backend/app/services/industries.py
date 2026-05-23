@@ -1,13 +1,14 @@
 """종류별 종목 카테고리.
 
-업종/테마 기준 큐레이션 — 한국/미국/코인 종목을 같이 묶어
-"종류별 종목" 화면에 노출.
+업종/테마 기준 — 큐레이션된 시드 + DB의 모든 활성 종목 이름 키워드로
+자동 분류해 카테고리에 흡수.
 """
 from __future__ import annotations
 
 import asyncio
 import time
-from typing import Iterable
+from datetime import datetime as _dt
+from decimal import Decimal as _Dec
 
 from loguru import logger
 
@@ -19,101 +20,60 @@ from .sources import upbit as _upbit
 from .sources.kr_seeds import KR_SEEDS
 from .sources.us_seeds import US_SEEDS
 
-# (category_key, label, [(market, code), ...])
+# (category_key, label, [(market, code), ...])  — 큐레이션 시드 (확정 매핑)
 INDUSTRY_GROUPS: list[tuple[str, str, list[tuple[str, str]]]] = [
     (
         "semiconductor",
         "반도체",
         [
-            ("KRX", "005930"),  # 삼성전자
-            ("KRX", "000660"),  # SK하이닉스
-            ("KRX", "042700"),  # 한미반도체
-            ("KRX", "034220"),  # LG디스플레이
-            ("KRX", "009150"),  # 삼성전기
-            ("KRX", "011070"),  # LG이노텍
-            ("NASDAQ", "NVDA"),
-            ("NASDAQ", "AMD"),
-            ("NASDAQ", "INTC"),
-            ("NASDAQ", "QCOM"),
-            ("NASDAQ", "MU"),
-            ("NASDAQ", "AVGO"),
-            ("NASDAQ", "AMAT"),
-            ("NASDAQ", "LRCX"),
-            ("NASDAQ", "KLAC"),
-            ("NASDAQ", "ASML"),
-            ("NYSE", "TSM"),
-            ("NASDAQ", "ARM"),
+            ("KRX", "005930"), ("KRX", "000660"), ("KRX", "042700"),
+            ("KRX", "034220"), ("KRX", "009150"), ("KRX", "011070"),
+            ("NASDAQ", "NVDA"), ("NASDAQ", "AMD"), ("NASDAQ", "INTC"),
+            ("NASDAQ", "QCOM"), ("NASDAQ", "MU"), ("NASDAQ", "AVGO"),
+            ("NASDAQ", "AMAT"), ("NASDAQ", "LRCX"), ("NASDAQ", "KLAC"),
+            ("NASDAQ", "ASML"), ("NYSE", "TSM"), ("NASDAQ", "ARM"),
         ],
     ),
     (
         "tech_software",
         "기술/소프트웨어",
         [
-            ("KRX", "035420"),  # NAVER
-            ("KRX", "035720"),  # 카카오
-            ("KRX", "018260"),  # 삼성SDS
-            ("NASDAQ", "AAPL"),
-            ("NASDAQ", "MSFT"),
-            ("NASDAQ", "GOOGL"),
-            ("NASDAQ", "META"),
-            ("NASDAQ", "AMZN"),
-            ("NYSE", "ORCL"),
-            ("NYSE", "CRM"),
-            ("NASDAQ", "ADBE"),
-            ("NYSE", "PLTR"),
-            ("NASDAQ", "NOW"),
-            ("NASDAQ", "INTU"),
+            ("KRX", "035420"), ("KRX", "035720"), ("KRX", "018260"),
+            ("NASDAQ", "AAPL"), ("NASDAQ", "MSFT"), ("NASDAQ", "GOOGL"),
+            ("NASDAQ", "META"), ("NASDAQ", "AMZN"), ("NYSE", "ORCL"),
+            ("NYSE", "CRM"), ("NASDAQ", "ADBE"), ("NYSE", "PLTR"),
+            ("NASDAQ", "NOW"), ("NASDAQ", "INTU"),
         ],
     ),
     (
         "auto",
         "자동차",
         [
-            ("KRX", "005380"),  # 현대차
-            ("KRX", "000270"),  # 기아
-            ("KRX", "012330"),  # 현대모비스
-            ("NASDAQ", "TSLA"),
-            ("NYSE", "F"),
-            ("NYSE", "GM"),
-            ("NASDAQ", "RIVN"),
-            ("NASDAQ", "LCID"),
-            ("NYSE", "NIO"),
-            ("NYSE", "XPEV"),
-            ("NASDAQ", "LI"),
+            ("KRX", "005380"), ("KRX", "000270"), ("KRX", "012330"),
+            ("NASDAQ", "TSLA"), ("NYSE", "F"), ("NYSE", "GM"),
+            ("NASDAQ", "RIVN"), ("NASDAQ", "LCID"), ("NYSE", "NIO"),
+            ("NYSE", "XPEV"), ("NASDAQ", "LI"),
         ],
     ),
     (
         "pharma",
         "의약/바이오",
         [
-            ("KRX", "207940"),  # 삼성바이오로직스
-            ("KRX", "068270"),  # 셀트리온
-            ("KRX", "128940"),  # 한미약품
-            ("KRX", "000100"),  # 유한양행
-            ("NYSE", "LLY"),
-            ("NYSE", "UNH"),
-            ("NYSE", "JNJ"),
-            ("NYSE", "PFE"),
-            ("NYSE", "ABBV"),
-            ("NYSE", "MRK"),
-            ("NYSE", "NVO"),
-            ("NASDAQ", "MRNA"),
+            ("KRX", "207940"), ("KRX", "068270"), ("KRX", "128940"),
+            ("KRX", "000100"),
+            ("NYSE", "LLY"), ("NYSE", "UNH"), ("NYSE", "JNJ"),
+            ("NYSE", "PFE"), ("NYSE", "ABBV"), ("NYSE", "MRK"),
+            ("NYSE", "NVO"), ("NASDAQ", "MRNA"),
         ],
     ),
     (
         "airline",
         "항공/방산",
         [
-            ("KRX", "003490"),  # 대한항공
-            ("KRX", "020560"),  # 아시아나항공
-            ("KRX", "180640"),  # 한진칼
-            ("KRX", "012450"),  # 한화에어로스페이스
-            ("KRX", "047810"),  # 한국항공우주
-            ("KRX", "272210"),  # 한화시스템
-            ("KRX", "079550"),  # LIG넥스원
-            ("NYSE", "BA"),
-            ("NYSE", "DAL"),
-            ("NASDAQ", "UAL"),
+            ("KRX", "003490"), ("KRX", "020560"), ("KRX", "180640"),
+            ("KRX", "012450"), ("KRX", "047810"), ("KRX", "272210"),
+            ("KRX", "079550"),
+            ("NYSE", "BA"), ("NYSE", "DAL"), ("NASDAQ", "UAL"),
             ("NASDAQ", "AAL"),
         ],
     ),
@@ -121,141 +81,148 @@ INDUSTRY_GROUPS: list[tuple[str, str, list[tuple[str, str]]]] = [
         "finance",
         "금융",
         [
-            ("KRX", "105560"),  # KB금융
-            ("KRX", "055550"),  # 신한지주
-            ("KRX", "086790"),  # 하나금융
-            ("KRX", "316140"),  # 우리금융
-            ("KRX", "024110"),  # 기업은행
-            ("KRX", "000810"),  # 삼성화재
-            ("KRX", "032830"),  # 삼성생명
-            ("NYSE", "JPM"),
-            ("NYSE", "BAC"),
-            ("NYSE", "WFC"),
-            ("NYSE", "GS"),
-            ("NYSE", "MS"),
-            ("NYSE", "V"),
-            ("NYSE", "MA"),
-            ("NYSE", "BRK-B"),
+            ("KRX", "105560"), ("KRX", "055550"), ("KRX", "086790"),
+            ("KRX", "316140"), ("KRX", "024110"), ("KRX", "000810"),
+            ("KRX", "032830"),
+            ("NYSE", "JPM"), ("NYSE", "BAC"), ("NYSE", "WFC"),
+            ("NYSE", "GS"), ("NYSE", "MS"), ("NYSE", "V"),
+            ("NYSE", "MA"), ("NYSE", "BRK-B"),
         ],
     ),
     (
         "energy",
         "에너지/소재",
         [
-            ("KRX", "096770"),  # SK이노베이션
-            ("KRX", "010950"),  # S-Oil
-            ("KRX", "015760"),  # 한국전력
-            ("KRX", "005490"),  # POSCO홀딩스
-            ("KRX", "004020"),  # 현대제철
-            ("KRX", "010130"),  # 고려아연
-            ("NYSE", "XOM"),
-            ("NYSE", "CVX"),
-            ("NYSE", "COP"),
-            ("NYSE", "SLB"),
-            ("NYSE", "OXY"),
+            ("KRX", "096770"), ("KRX", "010950"), ("KRX", "015760"),
+            ("KRX", "005490"), ("KRX", "004020"), ("KRX", "010130"),
+            ("NYSE", "XOM"), ("NYSE", "CVX"), ("NYSE", "COP"),
+            ("NYSE", "SLB"), ("NYSE", "OXY"),
         ],
     ),
     (
         "consumer",
         "소비/유통",
         [
-            ("KRX", "139480"),  # 이마트
-            ("KRX", "097950"),  # CJ제일제당
-            ("KRX", "271560"),  # 오리온
-            ("KRX", "033780"),  # KT&G
-            ("NYSE", "WMT"),
-            ("NASDAQ", "COST"),
-            ("NYSE", "HD"),
-            ("NYSE", "TGT"),
-            ("NYSE", "NKE"),
-            ("NASDAQ", "SBUX"),
-            ("NYSE", "MCD"),
-            ("NYSE", "DIS"),
-            ("NYSE", "KO"),
-            ("NASDAQ", "PEP"),
-            ("NYSE", "PG"),
+            ("KRX", "139480"), ("KRX", "097950"), ("KRX", "271560"),
+            ("KRX", "033780"),
+            ("NYSE", "WMT"), ("NASDAQ", "COST"), ("NYSE", "HD"),
+            ("NYSE", "TGT"), ("NYSE", "NKE"), ("NASDAQ", "SBUX"),
+            ("NYSE", "MCD"), ("NYSE", "DIS"), ("NYSE", "KO"),
+            ("NASDAQ", "PEP"), ("NYSE", "PG"),
         ],
     ),
     (
         "game_entertainment",
         "게임/엔터",
         [
-            ("KRX", "259960"),  # 크래프톤
-            ("KRX", "251270"),  # 넷마블
-            ("KRX", "352820"),  # 하이브
-            ("NASDAQ", "EA"),
-            ("NASDAQ", "TTWO"),
-            ("NASDAQ", "NFLX"),
-            ("NYSE", "DIS"),
-            ("NYSE", "RBLX"),
-            ("NYSE", "SPOT"),
+            ("KRX", "259960"), ("KRX", "251270"), ("KRX", "352820"),
+            ("NASDAQ", "EA"), ("NASDAQ", "TTWO"), ("NASDAQ", "NFLX"),
+            ("NYSE", "DIS"), ("NYSE", "RBLX"), ("NYSE", "SPOT"),
         ],
     ),
     (
         "shipbuilding",
         "조선/중공업",
         [
-            ("KRX", "009540"),  # HD한국조선해양
-            ("KRX", "329180"),  # HD현대중공업
-            ("KRX", "010620"),  # HD현대미포
-            ("KRX", "042660"),  # 한화오션
-            ("KRX", "267260"),  # HD현대일렉트릭
-            ("KRX", "034020"),  # 두산에너빌리티
-            ("KRX", "241560"),  # 두산밥캣
-            ("KRX", "000150"),  # 두산
+            ("KRX", "009540"), ("KRX", "329180"), ("KRX", "010620"),
+            ("KRX", "042660"), ("KRX", "267260"), ("KRX", "034020"),
+            ("KRX", "241560"), ("KRX", "000150"),
         ],
     ),
     (
         "battery_evchem",
         "2차전지/화학",
         [
-            ("KRX", "373220"),  # LG에너지솔루션
-            ("KRX", "006400"),  # 삼성SDI
-            ("KRX", "051910"),  # LG화학
-            ("KRX", "003670"),  # 포스코퓨처엠
-            ("KRX", "011170"),  # 롯데케미칼
-            ("KRX", "009830"),  # 한화솔루션
+            ("KRX", "373220"), ("KRX", "006400"), ("KRX", "051910"),
+            ("KRX", "003670"), ("KRX", "011170"), ("KRX", "009830"),
         ],
     ),
     (
         "crypto",
         "코인",
         [
-            ("UPBIT", "KRW-BTC"),
-            ("UPBIT", "KRW-ETH"),
-            ("UPBIT", "KRW-XRP"),
-            ("UPBIT", "KRW-SOL"),
-            ("UPBIT", "KRW-DOGE"),
-            ("UPBIT", "KRW-ADA"),
-            ("UPBIT", "KRW-AVAX"),
-            ("UPBIT", "KRW-LINK"),
-            ("UPBIT", "KRW-MATIC"),
-            ("UPBIT", "KRW-DOT"),
+            ("UPBIT", "KRW-BTC"), ("UPBIT", "KRW-ETH"), ("UPBIT", "KRW-XRP"),
+            ("UPBIT", "KRW-SOL"), ("UPBIT", "KRW-DOGE"), ("UPBIT", "KRW-ADA"),
+            ("UPBIT", "KRW-AVAX"), ("UPBIT", "KRW-LINK"),
+            ("UPBIT", "KRW-MATIC"), ("UPBIT", "KRW-DOT"),
         ],
     ),
 ]
 
 
-# 캐시: 60s TTL
+# 자동 분류용 키워드 — KRX/US 종목 이름에 포함된 단어로 매칭
+# (대소문자 무시, 부분일치)
+NAME_KEYWORDS_KR: dict[str, list[str]] = {
+    "semiconductor": [
+        "반도체", "디스플레이", "이노텍", "전기", "소자", "솔브레인", "동진쎄미",
+        "DB하이텍", "원익", "테스", "유진테크", "리노공업", "심텍", "ISC",
+    ],
+    "tech_software": [
+        "소프트", "테크놀로", "솔루션", "시스템", "정보통신", "네이버", "카카오",
+        "엔씨", "더존", "안랩", "한글과컴퓨터", "SDS", "SK텔레콤", "LG유플러스", "KT ",
+    ],
+    "auto": [
+        "자동차", "모비스", "현대차", "기아", "에코프로비엠", "타이어", "성우하이텍",
+        "에스엘", "한온시스템", "만도",
+    ],
+    "pharma": [
+        "제약", "바이오", "약품", "헬스케어", "메디", "팜", "녹십자", "유한양행",
+        "셀트리온", "보령", "동아에스티", "한미", "광동", "동화", "삼진",
+    ],
+    "airline": [
+        "항공", "에어로", "방위", "방산", "한국항공우주", "넥스원", "한화시스템",
+    ],
+    "finance": [
+        "금융", "은행", "증권", "보험", "캐피탈", "지주", "신한", "KB", "하나금", "우리",
+        "삼성생명", "삼성화재", "DB손해", "메리츠",
+    ],
+    "energy": [
+        "에너지", "전력", "가스", "정유", "석유", "POSCO", "포스코", "철강", "현대제철",
+        "고려아연", "S-Oil", "SK이노", "한국전력", "한국가스",
+    ],
+    "consumer": [
+        "식품", "유통", "마트", "백화점", "리테일", "주류", "음료", "롯데쇼핑", "이마트",
+        "CJ제일제당", "오리온", "농심", "오뚜기", "KT&G", "BGF", "GS리테일", "현대백화점",
+        "신세계",
+    ],
+    "game_entertainment": [
+        "게임", "엔터", "미디어", "엠넷", "방송", "크래프톤", "넷마블", "엔씨소프트",
+        "위메이드", "펄어비스", "데브시스터즈", "하이브", "JYP", "SM ", "YG",
+        "스튜디오드래곤", "콘텐트리",
+    ],
+    "shipbuilding": [
+        "조선", "중공업", "오션", "두산", "현대일렉", "현대미포", "한화오션",
+        "한국조선해양", "현대로템",
+    ],
+    "battery_evchem": [
+        "배터리", "화학", "케미칼", "에너지솔루션", "퓨처엠", "에코프로", "엘앤에프",
+        "포스코퓨처엠", "LG화학", "삼성SDI", "한화솔루션", "롯데케미칼", "코스모신소재",
+    ],
+}
+
+NAME_KEYWORDS_US: dict[str, list[str]] = {
+    "semiconductor": ["semiconductor", "chip", "fab"],
+    "tech_software": ["software", "cloud", "data", "ai "],
+    "auto": ["motor", "automotive", "ev "],
+    "pharma": ["pharm", "bio", "health", "medic", "therap"],
+    "airline": ["airlines", "aero", "boeing", "defense"],
+    "finance": ["bank", "financial", "capital", "insurance"],
+    "energy": ["energy", "oil", "gas", "petro", "power"],
+    "consumer": ["foods", "beverage", "retail", "stores"],
+    "game_entertainment": ["games", "entertain", "media", "studios"],
+    "shipbuilding": ["ship", "marine"],
+    "battery_evchem": ["chem", "battery"],
+}
+
+
+# 캐시
 _cache: tuple[float, list[dict]] | None = None
-_TTL = 60.0
+_TTL_FULL = 60.0   # 모든 카테고리 가격이 충분히 채워졌을 때
+_TTL_PARTIAL = 15.0  # 가격 비어있는 게 많을 때 → 짧게
 _lock = asyncio.Lock()
 
 
-def _all_codes() -> list[tuple[str, str]]:
-    seen = set()
-    out: list[tuple[str, str]] = []
-    for _, _, codes in INDUSTRY_GROUPS:
-        for mc in codes:
-            if mc in seen:
-                continue
-            seen.add(mc)
-            out.append(mc)
-    return out
-
-
 def _name_lookup() -> dict[tuple[str, str], str]:
-    """(market, code) → 한글명."""
     out: dict[tuple[str, str], str] = {}
     for c, n, _, _ in KR_SEEDS:
         out[("KRX", c)] = n
@@ -264,45 +231,96 @@ def _name_lookup() -> dict[tuple[str, str], str]:
     return out
 
 
+def _classify_by_name(name: str, market: str) -> list[str]:
+    """이름으로부터 매칭되는 카테고리 키 리스트."""
+    if not name:
+        return []
+    n = name.lower()
+    keys: list[str] = []
+    table = NAME_KEYWORDS_KR if market == "KRX" else NAME_KEYWORDS_US
+    for cat, kws in table.items():
+        for kw in kws:
+            if kw.lower() in n:
+                keys.append(cat)
+                break
+    return keys
+
+
+def _build_groups(db) -> dict[str, list[tuple[str, str]]]:
+    """카테고리 키 → (market, code) 목록. 시드 + DB 자동 분류 병합."""
+    out: dict[str, list[tuple[str, str]]] = {k: [] for k, _, _ in INDUSTRY_GROUPS}
+    seen: dict[str, set[tuple[str, str]]] = {k: set() for k in out}
+
+    # 1) 시드 먼저
+    for k, _, codes in INDUSTRY_GROUPS:
+        for mc in codes:
+            if mc not in seen[k]:
+                seen[k].add(mc)
+                out[k].append(mc)
+
+    # 2) DB 자동 분류 — KRX/NASDAQ/NYSE/AMEX 활성 종목
+    syms = (
+        db.query(Symbol)
+        .filter(Symbol.is_active)
+        .filter(Symbol.market.in_(["KRX", "NASDAQ", "NYSE", "AMEX"]))
+        .all()
+    )
+    for s in syms:
+        cats = _classify_by_name(s.name or "", s.market)
+        for c in cats:
+            mc = (s.market, s.code)
+            if mc not in seen[c]:
+                seen[c].add(mc)
+                out[c].append(mc)
+    return out
+
+
 async def _fetch_live_quotes(
     krx: list[str], us: list[tuple[str, str]], upbit: list[str]
 ) -> dict[tuple[str, str], dict]:
-    """누락된 종목들에 대해 실시간 가격 batch 조회.
-
-    KRX: Stooq KR 폴백 (가장 빠름) → KIS (있으면)
-    US: Stooq → (없으면 yfinance 생략, 인기 워밍업으로 대부분 채워짐)
-    UPBIT: 공식 API (빠름)
-    """
+    """누락 종목 실시간 batch 조회. KIS와 Stooq를 race (먼저 성공한 결과 합쳐 사용)."""
     out: dict[tuple[str, str], dict] = {}
 
     async def _krx_path() -> None:
         if not krx:
             return
-        try:
-            # KIS가 설정돼 있으면 우선 시도
-            if _kis._configured():
-                try:
-                    q = await asyncio.wait_for(_kis.fetch_prices(krx), timeout=8.0)
-                    for code, info in q.items():
-                        if info:
-                            out[("KRX", code)] = info
-                except asyncio.TimeoutError:
-                    pass
-            missing = [c for c in krx if ("KRX", c) not in out]
-            if missing:
-                q = await asyncio.wait_for(_stooq.fetch_quotes_kr(missing), timeout=10.0)
-                for code, info in q.items():
-                    if info:
-                        out[("KRX", code)] = info
-        except Exception as e:
-            logger.warning("industries KRX fetch: {}", e)
+        # Stooq는 빠르고 신뢰성 OK — KIS와 동시 호출해서 결과 합치기
+        async def via_stooq() -> dict:
+            try:
+                return await asyncio.wait_for(
+                    _stooq.fetch_quotes_kr(krx), timeout=25.0
+                )
+            except Exception as e:
+                logger.debug("industries Stooq KR: {}", e)
+                return {}
+
+        async def via_kis() -> dict:
+            if not _kis._configured():
+                return {}
+            try:
+                return await asyncio.wait_for(_kis.fetch_prices(krx), timeout=15.0)
+            except Exception as e:
+                logger.debug("industries KIS: {}", e)
+                return {}
+
+        st, ki = await asyncio.gather(via_stooq(), via_kis(), return_exceptions=False)
+        # KIS 우선 (한국 실시간) → 빈 자리 Stooq로 채움
+        merged: dict[str, dict] = {}
+        for code, info in (ki or {}).items():
+            if info:
+                merged[code] = info
+        for code, info in (st or {}).items():
+            if info and code not in merged:
+                merged[code] = info
+        for code, info in merged.items():
+            out[("KRX", code)] = info
 
     async def _us_path() -> None:
         if not us:
             return
         try:
             codes_only = [c for _, c in us]
-            q = await asyncio.wait_for(_stooq.fetch_quotes(codes_only), timeout=10.0)
+            q = await asyncio.wait_for(_stooq.fetch_quotes(codes_only), timeout=25.0)
             mkt_by = {c: m for m, c in us}
             for code, info in q.items():
                 if info:
@@ -314,7 +332,7 @@ async def _fetch_live_quotes(
         if not upbit:
             return
         try:
-            q = await asyncio.wait_for(_upbit.fetch_prices(upbit), timeout=6.0)
+            q = await asyncio.wait_for(_upbit.fetch_prices(upbit), timeout=10.0)
             for code, info in q.items():
                 if info:
                     out[("UPBIT", code)] = info
@@ -325,23 +343,78 @@ async def _fetch_live_quotes(
     return out
 
 
-async def industries() -> list[dict]:
-    """업종별 종목 + 현재가. 60s 캐시.
+def _upsert_prices(live: dict[tuple[str, str], dict]) -> None:
+    if not live:
+        return
+    db = SessionLocal()
+    try:
+        name_by = _name_lookup()
+        for (mkt, code), info in live.items():
+            sym = (
+                db.query(Symbol)
+                .filter(Symbol.market == mkt, Symbol.code == code)
+                .first()
+            )
+            if not sym:
+                name = name_by.get((mkt, code), code)
+                asset_type = "CRYPTO" if mkt == "UPBIT" else "STOCK"
+                currency = "USD" if mkt in ("NASDAQ", "NYSE", "AMEX") else "KRW"
+                sym = Symbol(
+                    code=code, name=name, market=mkt,
+                    asset_type=asset_type, currency=currency, is_active=True,
+                )
+                db.add(sym)
+                try:
+                    db.flush()
+                except Exception:
+                    db.rollback()
+                    continue
+            try:
+                price_val = _Dec(str(info["price"]))
+                prev_val = (
+                    _Dec(str(info["prev_close"]))
+                    if info.get("prev_close") else None
+                )
+            except Exception:
+                continue
+            existing = db.get(Price, sym.id)
+            if existing:
+                existing.price = price_val
+                existing.prev_close = prev_val
+                existing.ts = _dt.utcnow()
+            else:
+                db.add(Price(
+                    symbol_id=sym.id, price=price_val,
+                    prev_close=prev_val, ts=_dt.utcnow(),
+                ))
+        try:
+            db.commit()
+        except Exception as e:
+            logger.warning("industries price upsert: {}", e)
+            db.rollback()
+    finally:
+        db.close()
 
-    1) DB Price 있으면 그 값 사용
-    2) 누락된 종목은 실시간 batch 조회 후 Price DB에 upsert
+
+async def industries() -> list[dict]:
+    """업종별 종목 + 현재가.
+
+    1) DB Symbol 자동 분류로 카테고리에 흡수 (시드 + 키워드 매칭)
+    2) 가격 누락 종목은 실시간 batch 조회 후 Price DB upsert
+    3) 가격 충분히 채워졌으면 60s 캐시, 아니면 15s 캐시 (빠른 재시도)
     """
     global _cache
-    if _cache and (time.time() - _cache[0]) < _TTL:
+    if _cache and (time.time() - _cache[0]) < _TTL_FULL:
         return _cache[1]
 
     async with _lock:
-        if _cache and (time.time() - _cache[0]) < _TTL:
+        if _cache and (time.time() - _cache[0]) < _TTL_FULL:
             return _cache[1]
 
         db = SessionLocal()
         try:
-            # Symbol + Price 조회
+            groups_by_key = _build_groups(db)
+
             sym_rows = (
                 db.query(Symbol, Price)
                 .outerjoin(Price, Price.symbol_id == Symbol.id)
@@ -352,20 +425,13 @@ async def industries() -> list[dict]:
             for s, p in sym_rows:
                 by_mc[(s.market, s.code)] = (s, p)
 
-            name_by = _name_lookup()
-            for s, _ in sym_rows:
-                if s.market == "UPBIT":
-                    name_by[(s.market, s.code)] = s.name
-
-            # 가격 누락 종목 모으기 → 실시간 조회
             need_krx: list[str] = []
             need_us: list[tuple[str, str]] = []
             need_upbit: list[str] = []
-            for _, _, group_codes in INDUSTRY_GROUPS:
-                for mkt, code in group_codes:
+            for codes in groups_by_key.values():
+                for mkt, code in codes:
                     sp = by_mc.get((mkt, code))
-                    has_price = sp is not None and sp[1] is not None
-                    if has_price:
+                    if sp and sp[1] is not None:
                         continue
                     if mkt == "KRX" and code not in need_krx:
                         need_krx.append(code)
@@ -377,63 +443,9 @@ async def industries() -> list[dict]:
             db.close()
 
         live = await _fetch_live_quotes(need_krx, need_us, need_upbit)
+        _upsert_prices(live)
 
-        # 새로 받은 가격을 Price DB에 upsert
-        if live:
-            db = SessionLocal()
-            try:
-                from datetime import datetime as _dt
-                from decimal import Decimal as _Dec
-                for (mkt, code), info in live.items():
-                    sym = (
-                        db.query(Symbol)
-                        .filter(Symbol.market == mkt, Symbol.code == code)
-                        .first()
-                    )
-                    if not sym:
-                        # Symbol이 없으면 시드에서 이름 찾아 등록
-                        name = _name_lookup().get((mkt, code), code)
-                        asset_type = "CRYPTO" if mkt == "UPBIT" else "STOCK"
-                        currency = "USD" if mkt in ("NASDAQ", "NYSE", "AMEX") else "KRW"
-                        sym = Symbol(
-                            code=code, name=name, market=mkt,
-                            asset_type=asset_type, currency=currency,
-                            is_active=True,
-                        )
-                        db.add(sym)
-                        try:
-                            db.flush()
-                        except Exception:
-                            db.rollback()
-                            continue
-                    try:
-                        price_val = _Dec(str(info["price"]))
-                        prev_val = (
-                            _Dec(str(info["prev_close"]))
-                            if info.get("prev_close")
-                            else None
-                        )
-                    except Exception:
-                        continue
-                    existing = db.get(Price, sym.id)
-                    if existing:
-                        existing.price = price_val
-                        existing.prev_close = prev_val
-                        existing.ts = _dt.utcnow()
-                    else:
-                        db.add(Price(
-                            symbol_id=sym.id, price=price_val,
-                            prev_close=prev_val, ts=_dt.utcnow(),
-                        ))
-                try:
-                    db.commit()
-                except Exception as e:
-                    logger.warning("industries price upsert: {}", e)
-                    db.rollback()
-            finally:
-                db.close()
-
-        # 다시 읽어서 응답 만들기
+        # 응답 구성
         db = SessionLocal()
         try:
             sym_rows = (
@@ -444,14 +456,14 @@ async def industries() -> list[dict]:
             )
             by_mc = {(s.market, s.code): (s, p) for s, p in sym_rows}
             name_by = _name_lookup()
-            for s, _ in sym_rows:
-                if s.market == "UPBIT":
-                    name_by[(s.market, s.code)] = s.name
 
-            out: list[dict] = []
-            for key, label, group_codes in INDUSTRY_GROUPS:
+            out_list: list[dict] = []
+            total_items = 0
+            priced_items = 0
+            for key, label, _ in INDUSTRY_GROUPS:
+                codes = groups_by_key.get(key, [])
                 items: list[dict] = []
-                for mkt, code in group_codes:
+                for mkt, code in codes:
                     sp = by_mc.get((mkt, code))
                     name = name_by.get((mkt, code), code)
                     if sp:
@@ -460,8 +472,7 @@ async def industries() -> list[dict]:
                         prev = float(p.prev_close) if (p and p.prev_close) else None
                         change_pct = (
                             ((price - prev) / prev * 100)
-                            if (price is not None and prev)
-                            else None
+                            if (price is not None and prev) else None
                         )
                         items.append({
                             "symbol_id": s.id,
@@ -472,6 +483,8 @@ async def industries() -> list[dict]:
                             "price": price,
                             "change_pct": change_pct,
                         })
+                        if price is not None:
+                            priced_items += 1
                     else:
                         items.append({
                             "symbol_id": None,
@@ -482,10 +495,17 @@ async def industries() -> list[dict]:
                             "price": None,
                             "change_pct": None,
                         })
-                out.append({"key": key, "label": label, "items": items})
+                    total_items += 1
+                out_list.append({"key": key, "label": label, "items": items})
         finally:
             db.close()
 
-        if any(g["items"] for g in out):
-            _cache = (time.time(), out)
-        return out
+        # 가격이 70% 이상 채워지면 풀 캐시, 아니면 짧은 캐시
+        ratio = (priced_items / total_items) if total_items else 0.0
+        ttl = _TTL_FULL if ratio >= 0.7 else _TTL_PARTIAL
+        _cache = (time.time() - (_TTL_FULL - ttl), out_list)
+        logger.info(
+            "industries built: {}/{} priced ({:.0%}), ttl={}s",
+            priced_items, total_items, ratio, ttl,
+        )
+        return out_list
