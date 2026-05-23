@@ -232,20 +232,57 @@ async def popular_krx(sort: Sort, limit: int = 30) -> list[dict]:
                 )
                 # 시가총액 (같은 date로) — 실패해도 OHLCV는 살림
                 cap_map: dict[str, float] = {}
-                try:
-                    cap_df = stock.get_market_cap_by_ticker(date=used_date, market="ALL")
+                def _try_cap(d: str) -> "_pd.DataFrame | None":
+                    """ALL → KOSPI+KOSDAQ 폴백."""
+                    try:
+                        df_all = stock.get_market_cap_by_ticker(d, market="ALL")
+                        if df_all is not None and len(df_all) > 0:
+                            return df_all
+                    except Exception as e:
+                        logger.warning("pykrx cap ALL fail {}: {}", d, e)
+                    parts = []
+                    for mkt in ("KOSPI", "KOSDAQ"):
+                        try:
+                            part = stock.get_market_cap_by_ticker(d, market=mkt)
+                            if part is not None and len(part) > 0:
+                                parts.append(part)
+                        except Exception as e:
+                            logger.warning("pykrx cap {} {} fail: {}", mkt, d, e)
+                    if parts:
+                        return _pd.concat(parts)
+                    return None
+
+                # used_date 우선, 안 되면 직전 영업일 한두 번 더 시도
+                cap_df = None
+                for d_off in range(0, 5):
+                    cand_dt = (today - timedelta(days=d_off))
+                    if cand_dt.weekday() >= 5:
+                        continue
+                    d_try = cand_dt.strftime("%Y%m%d")
+                    cap_df = _try_cap(d_try)
                     if cap_df is not None and len(cap_df) > 0:
-                        cap_df = cap_df.reset_index().rename(
-                            columns={"티커": "code", "시가총액": "market_cap"}
+                        logger.info("KRX popular: market_cap date={} rows={}", d_try, len(cap_df))
+                        break
+                if cap_df is not None and len(cap_df) > 0:
+                    cap_df = cap_df.reset_index().rename(
+                        columns={"티커": "code", "시가총액": "market_cap"}
+                    )
+                    if "market_cap" not in cap_df.columns:
+                        logger.warning(
+                            "KRX cap: '시가총액' missing, columns={}",
+                            list(cap_df.columns),
                         )
+                    else:
                         for _r in cap_df[["code", "market_cap"]].to_dict("records"):
                             try:
-                                cap_map[str(_r["code"])] = float(_r["market_cap"])
+                                v = float(_r["market_cap"])
+                                if v > 0:
+                                    cap_map[str(_r["code"])] = v
                             except Exception:
                                 continue
-                        logger.info("KRX popular: market_cap rows={}", len(cap_map))
-                except Exception as e:
-                    logger.debug("pykrx market_cap fail: {}", e)
+                        logger.info("KRX popular: cap_map built rows={}", len(cap_map))
+                else:
+                    logger.warning("KRX popular: market_cap fetch all-failed")
                 rows = df[["code", "price", "volume", "value", "change_pct"]].to_dict("records")
                 for r in rows:
                     r["market_cap"] = cap_map.get(str(r["code"]))

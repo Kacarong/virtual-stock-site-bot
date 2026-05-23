@@ -149,6 +149,15 @@ async def portfolio(
     items = []
     total_value_krw = Decimal("0")
     total_cost_krw = Decimal("0")
+    # 시장별 평가/매수금 집계 (KRX / US / UPBIT)
+    grp_value: dict[str, Decimal] = {"KRX": Decimal("0"), "US": Decimal("0"), "UPBIT": Decimal("0")}
+    grp_cost: dict[str, Decimal] = {"KRX": Decimal("0"), "US": Decimal("0"), "UPBIT": Decimal("0")}
+    def _group_of(mkt: str) -> str:
+        if mkt in ("NASDAQ", "NYSE", "AMEX"):
+            return "US"
+        if mkt == "UPBIT":
+            return "UPBIT"
+        return "KRX"
     for h, s, p in holdings:
         cur_price = p.price if p else h.avg_cost
         value_native = cur_price * h.qty
@@ -166,6 +175,9 @@ async def portfolio(
 
         total_value_krw += value_krw
         total_cost_krw += cost_krw
+        g = _group_of(s.market)
+        grp_value[g] += value_krw
+        grp_cost[g] += cost_krw
 
         items.append(
             {
@@ -192,6 +204,20 @@ async def portfolio(
         (total_pnl_krw / total_cost_krw * 100) if total_cost_krw else Decimal("0")
     )
 
+    # 시장별 PnL
+    by_market = {}
+    for g in ("KRX", "US", "UPBIT"):
+        v = grp_value[g]
+        c = grp_cost[g]
+        pnl = v - c
+        pct = (pnl / c * 100) if c else Decimal("0")
+        by_market[g] = {
+            "value_krw": str(v),
+            "cost_krw": str(c),
+            "pnl_krw": str(pnl),
+            "pnl_pct": f"{pct:.2f}",
+        }
+
     return {
         "cash_krw": str(user.cash_krw),
         "cash_usd": str(user.cash_usd),
@@ -203,6 +229,7 @@ async def portfolio(
             "total_pnl_krw": str(total_pnl_krw),
             "total_pnl_pct": f"{total_pnl_pct:.2f}",
             "total_assets_krw": str(total_assets_krw),
+            "by_market": by_market,
         },
     }
 

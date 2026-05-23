@@ -25,6 +25,13 @@ type Holding = {
   pnl_pct: string;
 };
 
+type MarketPnl = {
+  value_krw: string;
+  cost_krw: string;
+  pnl_krw: string;
+  pnl_pct: string;
+};
+
 type Portfolio = {
   cash_krw: string;
   cash_usd: string;
@@ -36,6 +43,11 @@ type Portfolio = {
     total_pnl_krw: string;
     total_pnl_pct: string;
     total_assets_krw: string;
+    by_market?: {
+      KRX: MarketPnl;
+      US: MarketPnl;
+      UPBIT: MarketPnl;
+    };
   };
 };
 
@@ -120,12 +132,40 @@ export default function Home() {
       <div className="rounded-3xl bg-white p-6 shadow-sm">
         <p className="text-xs text-ink-3">총자산 (원화 환산)</p>
         <p className="mt-1 text-3xl font-bold">{fmtKRW(s.total_assets_krw)}</p>
-        <div className="mt-3 flex gap-4 text-sm">
-          <span className="text-ink-3">평가손익</span>
+        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
+          <span className="text-ink-3">평가손익 합계</span>
           <span className={`font-semibold ${pctClass(s.total_pnl_pct)}`}>
             {fmtKRW(s.total_pnl_krw)} ({Number(s.total_pnl_pct).toFixed(2)}%)
           </span>
         </div>
+        {s.by_market && (
+          <div className="mt-4 grid grid-cols-3 gap-2">
+            {[
+              { key: "KRX" as const, label: "국내" },
+              { key: "US" as const, label: "미국" },
+              { key: "UPBIT" as const, label: "코인" },
+            ].map(({ key, label }) => {
+              const m = s.by_market![key];
+              const hasPos = Number(m.cost_krw) > 0;
+              return (
+                <div key={key} className="rounded-xl bg-bg-2 px-3 py-2">
+                  <p className="text-[11px] text-ink-3">{label}</p>
+                  <p className="mt-0.5 text-sm font-semibold">
+                    {fmtKRW(m.value_krw)}
+                  </p>
+                  {hasPos ? (
+                    <p className={`text-[11px] font-semibold ${pctClass(m.pnl_pct)}`}>
+                      {Number(m.pnl_krw) >= 0 ? "+" : ""}
+                      {fmtKRW(m.pnl_krw)} ({Number(m.pnl_pct).toFixed(2)}%)
+                    </p>
+                  ) : (
+                    <p className="text-[11px] text-ink-3">보유 없음</p>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
       </div>
 
       {/* 현금 카드 */}
