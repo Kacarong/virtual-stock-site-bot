@@ -60,7 +60,12 @@ function PopularPanel({
   const { data, isLoading, error } = useSWR<Row[]>(
     `/market/popular?market=${market}&sort=${sort}&limit=10`,
     fetcher,
-    { refreshInterval: refreshMs, keepPreviousData: true }
+    {
+      // 데이터가 비었으면 (콜드 스타트 케이스) 빠르게 재시도
+      refreshInterval: (latest) =>
+        !latest || latest.length === 0 ? 4000 : refreshMs,
+      keepPreviousData: true,
+    }
   );
 
   // 환율 (US 패널만)

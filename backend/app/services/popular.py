@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from ..db import SessionLocal
 from ..models import Symbol
+from .krx_marketcap_fallback import KRX_MARKET_CAP_FALLBACK
 from .sources import kis as _kis
 from .sources import stooq as _stooq
 from .sources import upbit
@@ -143,9 +144,10 @@ async def popular_upbit(sort: Sort, limit: int = 30) -> list[dict]:
                 "market_cap": None,  # 코인은 시총 미지원
             }
         )
-    # 한 번 fetch한 데이터로 모든 sort 변형 채우기
-    for s in ("value", "volume", "change", "decline"):
-        _store(("UPBIT", s), _sort_rows(list(out), s))  # type: ignore
+    # 한 번 fetch한 데이터로 모든 sort 변형 채우기 (빈 결과는 캐시하지 않음)
+    if out:
+        for s in ("value", "volume", "change", "decline"):
+            _store(("UPBIT", s), _sort_rows(list(out), s))  # type: ignore
     return _sort_rows(out, sort)[:limit]
 
 
@@ -407,6 +409,12 @@ async def popular_krx(sort: Sort, limit: int = 30) -> list[dict]:
         if market_cap is not None:
             mc = _safe_float(market_cap)
             market_cap = mc if mc > 0 else None
+        # 최종 폴백: pykrx 시총 fetch가 실패해 None이면 하드코딩 백업표 사용
+        # (정확한 값은 아니지만 정렬 순서는 그럴듯하게 나옴)
+        if market_cap is None:
+            fb = KRX_MARKET_CAP_FALLBACK.get(code)
+            if fb:
+                market_cap = float(fb)
         out.append(
             {
                 "market": "KRX",
@@ -421,8 +429,10 @@ async def popular_krx(sort: Sort, limit: int = 30) -> list[dict]:
         )
 
     # 한 번 fetch한 데이터로 모든 sort 변형 캐시에 채워 토글 빠르게
-    for s in ("value", "volume", "change", "decline", "market_cap"):
-        _store(("KRX", s), _sort_rows(list(out), s))  # type: ignore
+    # ★ 빈 결과는 캐시하지 않음 (다음 요청에서 다시 시도 → "데이터 없음" 락업 방지)
+    if out:
+        for s in ("value", "volume", "change", "decline", "market_cap"):
+            _store(("KRX", s), _sort_rows(list(out), s))  # type: ignore
 
     return _sort_rows(out, sort)[:limit]
 
@@ -584,10 +594,12 @@ async def popular_us(sort: Sort, limit: int = 30) -> list[dict]:
         if not out:
             logger.warning("US popular all-failed, returning empty")
 
-        _store(("US", sort), _sort_rows(list(out), sort))
-        for s in ("value", "volume", "change", "decline", "market_cap"):
-            if s != sort:
-                _store(("US", s), _sort_rows(list(out), s))  # type: ignore
+        # 빈 결과는 캐시하지 않음 — 다음 요청에서 다시 시도
+        if out:
+            _store(("US", sort), _sort_rows(list(out), sort))
+            for s in ("value", "volume", "change", "decline", "market_cap"):
+                if s != sort:
+                    _store(("US", s), _sort_rows(list(out), s))  # type: ignore
         return _sort_rows(out, sort)[:limit]
 
 

@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from ..auth import admin_required, current_user
 from ..db import get_db
 from ..models import Price, Symbol, User
+from ..services.industries import industries as industries_svc
 from ..services.market_calendar import is_market_open, next_open
 from ..services.history import get_history
 from ..services.popular import popular as popular_svc
@@ -26,18 +27,61 @@ router = APIRouter(prefix="/market", tags=["market"])
 @router.get("/search")
 def search(
     q: str = Query(min_length=1, max_length=50),
-    limit: int = 20,
+    limit: int = 30,
     db: Session = Depends(get_db),
 ) -> list[dict]:
-    """종목 검색 (코드/이름 부분일치). 시드 한글명으로 자가복구."""
-    like = f"%{q}%"
-    rows = (
-        db.query(Symbol)
-        .filter(Symbol.is_active, or_(Symbol.code.ilike(like), Symbol.name.ilike(like)))
-        .order_by(Symbol.market, Symbol.code)
-        .limit(limit)
-        .all()
-    )
+    """종목 검색.
+
+    - 한/영문 검색 모두 대응 (Symbol 한글명 + 영문 alias)
+    - 매칭 우선순위: 코드 정확일치 > 이름 prefix > 코드/이름 부분일치
+    - Unicode NFC 정규화로 macOS NFD 입력도 매칭
+    """
+    import unicodedata
+    from ..services.search_aliases import EN_TO_CODE
+
+    qn = unicodedata.normalize("NFC", q.strip())
+    if not qn:
+        return []
+    like = f"%{qn}%"
+    starts = f"{qn}%"
+
+    # 1) 영문 alias → code 변환 (한 단어 검색만)
+    alias_codes: set[str] = set()
+    qn_lower = qn.lower()
+    for alias, code in EN_TO_CODE.items():
+        if alias in qn_lower:
+            alias_codes.add(code)
+
+    base = db.query(Symbol).filter(Symbol.is_active)
+    # OR 조건: 코드/이름 ilike OR alias code 매칭
+    conds = [Symbol.code.ilike(like), Symbol.name.ilike(like)]
+    if alias_codes:
+        conds.append(Symbol.code.in_(list(alias_codes)))
+    rows = base.filter(or_(*conds)).limit(200).all()
+
+    # 우선순위 점수: 코드 정확>이름 정확>코드 prefix>이름 prefix>코드 부분>이름 부분>alias>기타
+    def score(s: Symbol) -> tuple:
+        cl = s.code.lower()
+        nl = s.name.lower()
+        if cl == qn_lower:
+            return (0, 0, s.market, s.code)
+        if nl == qn_lower:
+            return (1, 0, s.market, s.code)
+        if cl.startswith(qn_lower):
+            return (2, len(cl), s.market, s.code)
+        if nl.startswith(qn_lower):
+            return (3, len(nl), s.market, s.code)
+        if qn_lower in cl:
+            return (4, len(cl), s.market, s.code)
+        if qn_lower in nl:
+            return (5, len(nl), s.market, s.code)
+        if s.code in alias_codes:
+            return (6, 0, s.market, s.code)
+        return (9, 0, s.market, s.code)
+
+    rows.sort(key=score)
+    rows = rows[:limit]
+
     # 시드와 이름이 다르면 한글명으로 보정
     dirty = False
     for s in rows:
@@ -224,6 +268,12 @@ async def popular(
               decline(급락) / market_cap(시가총액)
     """
     return await popular_svc(market, sort, limit)  # type: ignore
+
+
+@router.get("/industries")
+async def industries() -> list[dict]:
+    """업종별/테마별 종목 — 한국/미국/코인 묶음."""
+    return await industries_svc()
 
 
 @router.post("/symbols/sync")
