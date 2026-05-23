@@ -365,6 +365,54 @@ export default function SymbolPage({
           </div>
         )}
 
+        {/* 25%/50%/100% 비율 버튼 — 매수=현금기준, 매도=보유수량기준 */}
+        {(() => {
+          const refPrice = (() => {
+            if (orderType === "LIMIT" && limitPrice) {
+              const lp = Number(limitPrice);
+              if (isFinite(lp) && lp > 0) return lp;
+            }
+            return q?.price ? Number(q.price) : 0;
+          })();
+          const isUpbit = market === "UPBIT";
+          // 매수 가능 금액 (해당 종목 통화 기준)
+          const cashKrw = pf?.cash_krw ? Number(pf.cash_krw) : 0;
+          const cashUsd = pf?.cash_usd ? Number(pf.cash_usd) : 0;
+          const buyCash = isUS ? cashUsd : cashKrw;
+          const canBuy = refPrice > 0 && buyCash > 0;
+          const canSell = holdingQty > 0;
+          const active = side === "BUY" ? canBuy : canSell;
+          if (!active) return null;
+          const apply = (pct: number) => {
+            if (side === "BUY") {
+              const raw = (buyCash * pct) / 100 / refPrice;
+              if (!isFinite(raw) || raw <= 0) return;
+              setQty(isUpbit ? raw.toFixed(8).replace(/\.?0+$/, "") : String(Math.floor(raw)));
+            } else {
+              const raw = (holdingQty * pct) / 100;
+              if (!isFinite(raw) || raw <= 0) return;
+              setQty(isUpbit ? raw.toFixed(8).replace(/\.?0+$/, "") : String(Math.floor(raw)));
+            }
+          };
+          return (
+            <div className="mt-3 flex gap-1.5">
+              {[25, 50, 100].map((p) => (
+                <button
+                  key={p}
+                  onClick={() => apply(p)}
+                  className={`flex-1 rounded-lg py-2 text-xs font-semibold ${
+                    side === "BUY"
+                      ? "bg-up/10 text-up hover:bg-up/20"
+                      : "bg-down/10 text-down hover:bg-down/20"
+                  }`}
+                >
+                  {p === 100 ? (side === "BUY" ? "전량매수" : "전량매도") : `${p}%`}
+                </button>
+              ))}
+            </div>
+          );
+        })()}
+
         <div className="mt-4 flex gap-2">
           {(
             isOpen

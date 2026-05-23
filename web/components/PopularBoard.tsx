@@ -73,14 +73,14 @@ function PopularPanel({
 
   return (
     <div className="flex flex-col rounded-3xl bg-white shadow-sm">
-      <div className="flex items-center justify-between border-b border-bg-3 px-5 py-3">
-        <h3 className="font-semibold">{title}</h3>
-        <div className="flex flex-wrap justify-end gap-1">
+      <div className="border-b border-bg-3 px-5 py-3">
+        <h3 className="font-semibold whitespace-nowrap">{title}</h3>
+        <div className="mt-2 flex flex-wrap gap-1">
           {sortsForMarket.map((s) => (
             <button
               key={s.key}
               onClick={() => setSort(s.key)}
-              className={`rounded-full px-2 py-1 text-[11px] ${
+              className={`rounded-full px-2 py-1 text-[11px] whitespace-nowrap ${
                 sort === s.key
                   ? "bg-ink-1 text-white"
                   : "bg-bg-2 text-ink-3 hover:bg-bg-3"

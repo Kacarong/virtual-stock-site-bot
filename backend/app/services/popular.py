@@ -143,9 +143,10 @@ async def popular_upbit(sort: Sort, limit: int = 30) -> list[dict]:
                 "market_cap": None,  # 코인은 시총 미지원
             }
         )
-    out = _sort_rows(out, sort)
-    _store(key, out)
-    return out[:limit]
+    # 한 번 fetch한 데이터로 모든 sort 변형 채우기
+    for s in ("value", "volume", "change", "decline"):
+        _store(("UPBIT", s), _sort_rows(list(out), s))  # type: ignore
+    return _sort_rows(out, sort)[:limit]
 
 
 # ------------------------------------------------------------------ KRX
@@ -157,7 +158,8 @@ async def popular_krx(sort: Sort, limit: int = 30) -> list[dict]:
 
     lock = _lock_for("KRX")
     if lock.locked():
-        for s in ("value", "volume", "change"):
+        # 다른 sort 캐시(stale 포함)로 즉시 응답 — 무한 로딩 방지
+        for s in ("value", "volume", "change", "decline", "market_cap"):
             stale = _cache.get(("KRX", s))
             if stale:
                 return _sort_rows(list(stale[1]), sort)[:limit]
@@ -177,21 +179,36 @@ async def popular_krx(sort: Sort, limit: int = 30) -> list[dict]:
                 today = datetime.now()
                 df = None
                 used_date = None
-                for d in range(0, 10):
-                    date = (today - timedelta(days=d)).strftime("%Y%m%d")
+                for d in range(0, 14):
+                    cand_dt = today - timedelta(days=d)
+                    # 주말 스킵 (pykrx는 평일만 데이터 있음)
+                    if cand_dt.weekday() >= 5:
+                        continue
+                    date = cand_dt.strftime("%Y%m%d")
                     try:
                         cand = stock.get_market_ohlcv_by_ticker(date=date, market="ALL")
                         if cand is None or len(cand) == 0:
                             continue
-                        # ★ 핵심 휴리스틱: 삼성전자(005930) 가격이 NaN이면
-                        # pykrx가 장 마감 직후 partial 데이터 흘리는 케이스 →
-                        # 해당 날짜는 버리고 이전 영업일 시도
+                        # ★ 핵심 휴리스틱: 삼성전자(005930)의 종가/거래대금이 비정상이면
+                        # pykrx가 partial 데이터를 흘리는 케이스 → 해당 날짜 버리고 이전 영업일 시도
                         try:
                             samsung = cand.loc["005930"]
                             price_col = "종가" if "종가" in cand.columns else cand.columns[3]
-                            if _pd.isna(samsung[price_col]) or float(samsung[price_col]) <= 0:
-                                logger.info("KRX popular: pykrx {} samsung price=NaN, skip", date)
+                            val_col = "거래대금" if "거래대금" in cand.columns else None
+                            bad_price = _pd.isna(samsung[price_col]) or float(samsung[price_col]) <= 0
+                            bad_value = False
+                            if val_col is not None:
+                                bad_value = _pd.isna(samsung[val_col]) or float(samsung[val_col]) <= 0
+                            if bad_price or bad_value:
+                                logger.info(
+                                    "KRX popular: pykrx {} samsung bad (price_bad={}, value_bad={}), skip",
+                                    date, bad_price, bad_value,
+                                )
                                 continue
+                        except KeyError:
+                            # 삼성 없으면 휴장일 or partial → skip
+                            logger.info("KRX popular: pykrx {} no samsung row, skip", date)
+                            continue
                         except Exception:
                             pass
                         df = cand
@@ -366,9 +383,11 @@ async def popular_krx(sort: Sort, limit: int = 30) -> list[dict]:
             }
         )
 
-    out = _sort_rows(out, sort)
-    _store(key, out)
-    return out[:limit]
+    # 한 번 fetch한 데이터로 모든 sort 변형 캐시에 채워 토글 빠르게
+    for s in ("value", "volume", "change", "decline", "market_cap"):
+        _store(("KRX", s), _sort_rows(list(out), s))  # type: ignore
+
+    return _sort_rows(out, sort)[:limit]
 
 
 # ------------------------------------------------------------------ US
@@ -384,7 +403,12 @@ def _sort_rows(rows: list[dict], sort: Sort) -> list[dict]:
     elif sort == "decline":
         rows.sort(key=lambda x: ((x.get("change_pct") or 0), x.get("code", "")))
     elif sort == "market_cap":
-        rows.sort(key=lambda x: (-(x.get("market_cap") or 0), x.get("code", "")))
+        # 시총 없는 행(None)은 맨 뒤로 — 0/None을 -1로 두면 사전순으로 깨짐 방지
+        def _cap_key(x):
+            mc = x.get("market_cap")
+            has = mc is not None and mc > 0
+            return (0 if has else 1, -(mc or 0), x.get("code", ""))
+        rows.sort(key=_cap_key)
     return rows
 
 
