@@ -17,13 +17,17 @@ from loguru import logger
 BASE = "https://stooq.com/q/l/"
 HIST_BASE = "https://stooq.com/q/d/l/"
 
+# Stooq는 User-Agent 없으면 종종 빈 응답/차단 → 브라우저 UA 명시
+_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36"
+_HEADERS = {"User-Agent": _UA, "Accept": "text/csv,*/*"}
+
 
 async def fetch_history(code: str, count: int = 180) -> list[dict]:
     """일봉 히스토리 — Stooq d/l 엔드포인트 (CSV)."""
     sym = code.lower().replace("-", "-") + ".us"
     url = f"{HIST_BASE}?s={sym}&i=d"
     try:
-        async with httpx.AsyncClient(timeout=5) as c:
+        async with httpx.AsyncClient(timeout=10, headers=_HEADERS) as c:
             r = await c.get(url)
             r.raise_for_status()
             text = r.text
@@ -60,9 +64,18 @@ async def fetch_history(code: str, count: int = 180) -> list[dict]:
 
 async def _stooq_chunk(client: httpx.AsyncClient, syms_param: str) -> str:
     url = f"{BASE}?s={syms_param}&f=sd2t2ohlcv&h&e=csv"
-    r = await client.get(url)
-    r.raise_for_status()
-    return r.text
+    # 한 번 실패시 1초 후 1번 재시도
+    last_exc: Exception | None = None
+    for attempt in range(2):
+        try:
+            r = await client.get(url)
+            r.raise_for_status()
+            return r.text
+        except Exception as e:
+            last_exc = e
+            if attempt == 0:
+                await asyncio.sleep(1.0)
+    raise last_exc or RuntimeError("stooq fetch failed")
 
 
 async def fetch_quotes_kr(codes: list[str]) -> dict[str, dict]:
@@ -81,13 +94,13 @@ async def fetch_quotes_kr(codes: list[str]) -> dict[str, dict]:
         try:
             return await _stooq_chunk(client, syms)
         except Exception as e:
-            logger.debug("stooq KR chunk fail: {}", e)
+            logger.warning("stooq KR chunk fail (syms={}): {}", syms, repr(e))
             return ""
 
     out: dict[str, dict] = {}
     # httpx로 동시 ~20개씩 병렬
     limits = httpx.Limits(max_connections=20, max_keepalive_connections=20)
-    async with httpx.AsyncClient(timeout=8, limits=limits) as client:
+    async with httpx.AsyncClient(timeout=12, limits=limits, headers=_HEADERS) as client:
         texts = await asyncio.gather(*[one(ch, client) for ch in chunks])
 
     for text in texts:
@@ -136,12 +149,12 @@ async def fetch_quotes(codes: list[str]) -> dict[str, dict]:
         try:
             return await _stooq_chunk(client, syms)
         except Exception as e:
-            logger.debug("stooq US chunk fail: {}", e)
+            logger.warning("stooq US chunk fail (syms={}): {}", syms, repr(e))
             return ""
 
     out: dict[str, dict] = {}
     limits = httpx.Limits(max_connections=20, max_keepalive_connections=20)
-    async with httpx.AsyncClient(timeout=8, limits=limits) as client:
+    async with httpx.AsyncClient(timeout=12, limits=limits, headers=_HEADERS) as client:
         texts = await asyncio.gather(*[one(ch, client) for ch in chunks])
 
     for text in texts:

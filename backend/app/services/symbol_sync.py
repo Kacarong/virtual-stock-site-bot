@@ -64,23 +64,36 @@ async def sync_upbit() -> int:
 
 
 async def sync_krx_seeds() -> int:
-    """KRX 인기 시드(150개) 우선 upsert — pykrx 실패해도 검색은 즉시 동작."""
+    """KRX 인기 시드(150개) 우선 upsert — pykrx 실패해도 검색은 즉시 동작.
+
+    row별 commit + try/except — 하나가 실패해도 나머지 들어가도록 격리.
+    """
     db = SessionLocal()
+    ok = 0
+    fail = 0
     try:
         for code, name, asset_type, sector in KR_SEEDS:
-            _upsert_symbol(
-                db,
-                {
-                    "code": code,
-                    "name": name,
-                    "market": "KRX",
-                    "asset_type": asset_type,
-                    "currency": "KRW",
-                    "sector": sector,
-                },
-            )
-        db.commit()
-        return len(KR_SEEDS)
+            try:
+                _upsert_symbol(
+                    db,
+                    {
+                        "code": code,
+                        "name": name,
+                        "market": "KRX",
+                        "asset_type": asset_type,
+                        "currency": "KRW",
+                        "sector": sector,
+                    },
+                )
+                db.commit()
+                ok += 1
+            except Exception as e:
+                db.rollback()
+                fail += 1
+                logger.warning("KR_SEEDS upsert fail {} {}: {}", code, name, e)
+        if fail:
+            logger.warning("sync_krx_seeds: ok={} fail={}", ok, fail)
+        return ok
     finally:
         db.close()
 
@@ -102,23 +115,36 @@ async def sync_krx() -> int:
 
 
 async def sync_us() -> int:
-    """미국 주식/ETF — yfinance에 전종목 API가 없어 시드 목록을 upsert."""
+    """미국 주식/ETF — yfinance에 전종목 API가 없어 시드 목록을 upsert.
+
+    row별 commit으로 부분 실패 격리.
+    """
     db = SessionLocal()
+    ok = 0
+    fail = 0
     try:
         for code, name, market, asset_type in US_SEEDS:
-            _upsert_symbol(
-                db,
-                {
-                    "code": code,
-                    "name": name,
-                    "market": market,
-                    "asset_type": asset_type,
-                    "currency": "USD",
-                    "sector": None,
-                },
-            )
-        db.commit()
-        return len(US_SEEDS)
+            try:
+                _upsert_symbol(
+                    db,
+                    {
+                        "code": code,
+                        "name": name,
+                        "market": market,
+                        "asset_type": asset_type,
+                        "currency": "USD",
+                        "sector": None,
+                    },
+                )
+                db.commit()
+                ok += 1
+            except Exception as e:
+                db.rollback()
+                fail += 1
+                logger.warning("US_SEEDS upsert fail {} {}: {}", code, name, e)
+        if fail:
+            logger.warning("sync_us: ok={} fail={}", ok, fail)
+        return ok
     finally:
         db.close()
 

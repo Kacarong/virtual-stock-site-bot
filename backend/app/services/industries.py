@@ -20,6 +20,45 @@ from .sources import upbit as _upbit
 from .sources.kr_seeds import KR_SEEDS
 from .sources.us_seeds import US_SEEDS
 
+
+async def _fetch_yf_quotes(codes: list[str]) -> dict[str, dict]:
+    """yfinance fast_info로 종목별 현재가/전일종가 일괄 조회.
+
+    스레드풀에서 병렬 실행. 코드 형식:
+    - 미국: AAPL, NVDA …
+    - 한국: 005930.KS (KOSPI) / 005930.KQ (KOSDAQ)
+    """
+    if not codes:
+        return {}
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _one(code: str) -> tuple[str, dict | None]:
+        try:
+            import yfinance as yf  # type: ignore
+
+            t = yf.Ticker(code)
+            fi = t.fast_info
+            price = float(fi.last_price or 0)
+            prev = float(fi.previous_close or 0)
+            if price <= 0:
+                return code, None
+            return code, {
+                "price": _Dec(str(price)),
+                "prev_close": _Dec(str(prev)) if prev > 0 else None,
+            }
+        except Exception:
+            return code, None
+
+    loop = asyncio.get_event_loop()
+    with ThreadPoolExecutor(max_workers=20) as ex:
+        tasks = [loop.run_in_executor(ex, _one, c) for c in codes]
+        results = await asyncio.gather(*tasks)
+    out: dict[str, dict] = {}
+    for code, info in results:
+        if info:
+            out[code] = info
+    return out
+
 # (category_key, label, [(market, code), ...])  — 큐레이션 시드 (확정 매핑)
 INDUSTRY_GROUPS: list[tuple[str, str, list[tuple[str, str]]]] = [
     (
@@ -144,7 +183,7 @@ INDUSTRY_GROUPS: list[tuple[str, str, list[tuple[str, str]]]] = [
             ("UPBIT", "KRW-BTC"), ("UPBIT", "KRW-ETH"), ("UPBIT", "KRW-XRP"),
             ("UPBIT", "KRW-SOL"), ("UPBIT", "KRW-DOGE"), ("UPBIT", "KRW-ADA"),
             ("UPBIT", "KRW-AVAX"), ("UPBIT", "KRW-LINK"),
-            ("UPBIT", "KRW-MATIC"), ("UPBIT", "KRW-DOT"),
+            ("UPBIT", "KRW-DOT"),
         ],
     ),
 ]
@@ -312,21 +351,53 @@ async def _fetch_live_quotes(
         for code, info in (st or {}).items():
             if info and code not in merged:
                 merged[code] = info
+        # yfinance 폴백 (Stooq+KIS 둘 다 막힌 환경)
+        missing = [c for c in krx if c not in merged]
+        if missing:
+            try:
+                # 한국 종목은 .KS(KOSPI)/.KQ(KOSDAQ) 둘 다 시도 — 어느 쪽 상장인지 모를 때
+                # 두 형식 한 번에 yfinance에 던지고 성공한 쪽 채택
+                cand: list[str] = []
+                for c in missing:
+                    cand.append(f"{c}.KS")
+                    cand.append(f"{c}.KQ")
+                yfres = await asyncio.wait_for(
+                    _fetch_yf_quotes(cand), timeout=30.0
+                )
+                for k, info in yfres.items():
+                    code6 = k.split(".")[0]
+                    if code6 not in merged and info:
+                        merged[code6] = info
+            except Exception as e:
+                logger.warning("industries KRX yfinance fallback: {}", e)
         for code, info in merged.items():
             out[("KRX", code)] = info
 
     async def _us_path() -> None:
         if not us:
             return
+        codes_only = [c for _, c in us]
+        mkt_by = {c: m for m, c in us}
+        # 1) Stooq 시도
         try:
-            codes_only = [c for _, c in us]
             q = await asyncio.wait_for(_stooq.fetch_quotes(codes_only), timeout=25.0)
-            mkt_by = {c: m for m, c in us}
             for code, info in q.items():
                 if info:
                     out[(mkt_by.get(code, "NASDAQ"), code)] = info
         except Exception as e:
-            logger.warning("industries US fetch: {}", e)
+            logger.warning("industries Stooq US: {}", e)
+        # 2) yfinance 폴백 (Stooq가 막힌 NAS/방화벽 환경 대응)
+        missing = [c for c in codes_only if (mkt_by.get(c, "NASDAQ"), c) not in out]
+        if missing:
+            try:
+                q2 = await asyncio.wait_for(
+                    _fetch_yf_quotes(missing), timeout=30.0
+                )
+                for code, info in q2.items():
+                    if info:
+                        out[(mkt_by.get(code, "NASDAQ"), code)] = info
+            except Exception as e:
+                logger.warning("industries yfinance fallback: {}", e)
 
     async def _upbit_path() -> None:
         if not upbit:

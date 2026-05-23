@@ -59,6 +59,47 @@ def search(
         conds.append(Symbol.code.in_(list(alias_codes)))
     rows = base.filter(or_(*conds)).limit(200).all()
 
+    # 시드 자가복구 — DB 동기화 실패 시에도 시드는 검색되도록 즉시 insert
+    from ..services.sources.kr_seeds import KR_SEEDS
+    from ..services.sources.us_seeds import US_SEEDS
+
+    seen_keys = {(s.market, s.code) for s in rows}
+    added: list[Symbol] = []
+    for code, name, asset_type, sector in KR_SEEDS:
+        if ("KRX", code) in seen_keys:
+            continue
+        if qn in name or qn in code or qn_lower in name.lower():
+            s = Symbol(
+                code=code, name=name, market="KRX",
+                asset_type=asset_type, currency="KRW", sector=sector,
+                is_active=True,
+            )
+            db.add(s)
+            try:
+                db.commit()
+                db.refresh(s)
+                added.append(s)
+            except Exception:
+                db.rollback()
+    for code, name, mkt, asset_type in US_SEEDS:
+        if (mkt, code) in seen_keys:
+            continue
+        nl = name.lower()
+        if qn in name or qn_lower == code.lower() or qn_lower in nl:
+            s = Symbol(
+                code=code, name=name, market=mkt,
+                asset_type=asset_type, currency="USD",
+                is_active=True,
+            )
+            db.add(s)
+            try:
+                db.commit()
+                db.refresh(s)
+                added.append(s)
+            except Exception:
+                db.rollback()
+    rows.extend(added)
+
     # 우선순위 점수: 코드 정확>이름 정확>코드 prefix>이름 prefix>코드 부분>이름 부분>alias>기타
     def score(s: Symbol) -> tuple:
         cl = s.code.lower()
