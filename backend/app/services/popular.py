@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import math
 import time
+from datetime import datetime
 from decimal import Decimal
 from typing import Literal
 
@@ -17,7 +18,7 @@ from loguru import logger
 from sqlalchemy.orm import Session
 
 from ..db import SessionLocal
-from ..models import Symbol
+from ..models import Price, Symbol
 from .krx_marketcap_fallback import KRX_MARKET_CAP_FALLBACK
 from .sources import kis as _kis
 from .sources import stooq as _stooq
@@ -104,6 +105,106 @@ def _cached(key: tuple[str, str]) -> list[dict] | None:
 
 def _store(key: tuple[str, str], data: list[dict]) -> None:
     _cache[key] = (time.time(), data)
+
+
+def _persist_prices(market: str, rows: list[dict]) -> None:
+    """popular fetch 성공 데이터를 Price 테이블에 upsert.
+
+    이렇게 해두면 다음 호출에서 외부 소스가 실패해도 DB 폴백으로
+    "데이터 없음"이 뜨지 않는다. 코인은 너무 자주라 패스 (외부 API가 안정적).
+    """
+    if not rows or market == "UPBIT":
+        return
+    try:
+        db = SessionLocal()
+        try:
+            codes = [r["code"] for r in rows]
+            db_market = market if market == "KRX" else None  # US는 NASDAQ/NYSE 섞임
+            q = db.query(Symbol).filter(Symbol.code.in_(codes))
+            if db_market:
+                q = q.filter(Symbol.market == db_market)
+            else:
+                q = q.filter(Symbol.market.in_(["NASDAQ", "NYSE", "AMEX"]))
+            id_by_code = {s.code: s.id for s in q.all()}
+            now = datetime.utcnow()
+            for r in rows:
+                sid = id_by_code.get(r["code"])
+                if not sid:
+                    continue
+                price_v = r.get("price")
+                if price_v is None or price_v <= 0:
+                    continue
+                # change_pct로부터 prev_close 역산
+                change = r.get("change_pct") or 0
+                try:
+                    prev = Decimal(str(price_v)) / (Decimal("1") + Decimal(str(change)) / Decimal("100"))
+                except Exception:
+                    prev = None
+                existing = db.get(Price, sid)
+                if existing:
+                    existing.price = Decimal(str(price_v))
+                    if prev is not None:
+                        existing.prev_close = prev
+                    existing.ts = now
+                else:
+                    db.add(Price(
+                        symbol_id=sid,
+                        price=Decimal(str(price_v)),
+                        prev_close=prev,
+                        ts=now,
+                    ))
+            db.commit()
+        finally:
+            db.close()
+    except Exception as e:
+        logger.debug("persist_prices {} skip: {}", market, e)
+
+
+def _db_fallback(market: str, sort: Sort, limit: int) -> list[dict]:
+    """DB Price 테이블에서 마지막 가격으로 응답 구성 (최후의 보루)."""
+    try:
+        db = SessionLocal()
+        try:
+            if market == "KRX":
+                markets = ["KRX"]
+            elif market == "US":
+                markets = ["NASDAQ", "NYSE", "AMEX"]
+            else:
+                markets = ["UPBIT"]
+            rows_db = (
+                db.query(Symbol, Price)
+                .join(Price, Price.symbol_id == Symbol.id)
+                .filter(Symbol.market.in_(markets), Symbol.is_active)
+                .all()
+            )
+            out = []
+            for s, p in rows_db:
+                if not p or not p.price or p.price <= 0:
+                    continue
+                price = float(p.price)
+                prev = float(p.prev_close) if p.prev_close else price
+                change_pct = ((price - prev) / prev * 100) if prev else 0.0
+                mc = None
+                if market == "KRX":
+                    fb = KRX_MARKET_CAP_FALLBACK.get(s.code)
+                    if fb:
+                        mc = float(fb)
+                out.append({
+                    "market": s.market,
+                    "code": s.code,
+                    "name": s.name,
+                    "price": price,
+                    "change_pct": change_pct,
+                    "volume": 0.0,
+                    "value": 0.0,
+                    "market_cap": mc,
+                })
+            return _sort_rows(out, sort)[:limit]
+        finally:
+            db.close()
+    except Exception as e:
+        logger.debug("db_fallback {} skip: {}", market, e)
+        return []
 
 
 # ------------------------------------------------------------------ UPBIT
@@ -441,14 +542,21 @@ async def popular_krx(sort: Sort, limit: int = 30) -> list[dict]:
     if out:
         for s in ("value", "volume", "change", "decline", "market_cap"):
             _store(("KRX", s), _sort_rows(list(out), s))  # type: ignore
+        _persist_prices("KRX", out)  # DB에도 저장 → 다음 폴백
         return _sort_rows(out, sort)[:limit]
 
-    # 모든 소스 실패 → 만료된 캐시라도 있으면 stale로 반환 (화면 깜빡임 방지)
+    # 모든 소스 실패 → 만료된 메모리 캐시라도 있으면 stale로 반환
     for s in ("value", "volume", "change", "decline", "market_cap"):
         stale = _cache.get(("KRX", s))
         if stale:
-            logger.warning("KRX popular: all sources failed, returning stale cache")
+            logger.warning("KRX popular: all sources failed, returning stale memory cache")
             return _sort_rows(list(stale[1]), sort)[:limit]
+
+    # 최후의 보루: DB Price 테이블 폴백
+    db_rows = _db_fallback("KRX", sort, limit)
+    if db_rows:
+        logger.warning("KRX popular: returning DB Price fallback ({} rows)", len(db_rows))
+        return db_rows
     return []
 
 
@@ -615,14 +723,21 @@ async def popular_us(sort: Sort, limit: int = 30) -> list[dict]:
             for s in ("value", "volume", "change", "decline", "market_cap"):
                 if s != sort:
                     _store(("US", s), _sort_rows(list(out), s))  # type: ignore
+            _persist_prices("US", out)  # DB에도 저장
             return _sort_rows(out, sort)[:limit]
 
-        # 모든 소스 실패 → 만료된 캐시라도 있으면 stale로 반환
+        # 모든 소스 실패 → 만료된 메모리 캐시라도 있으면 stale로 반환
         for s in ("value", "volume", "change", "decline", "market_cap"):
             stale = _cache.get(("US", s))
             if stale:
-                logger.warning("US popular: all sources failed, returning stale cache")
+                logger.warning("US popular: all sources failed, returning stale memory cache")
                 return _sort_rows(list(stale[1]), sort)[:limit]
+
+        # 최후의 보루: DB Price 테이블 폴백
+        db_rows = _db_fallback("US", sort, limit)
+        if db_rows:
+            logger.warning("US popular: returning DB Price fallback ({} rows)", len(db_rows))
+            return db_rows
         return []
 
 
