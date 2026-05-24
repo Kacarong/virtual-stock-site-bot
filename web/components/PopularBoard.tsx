@@ -57,7 +57,7 @@ function PopularPanel({
     (s) => !(market === "UPBIT" && s.key === "market_cap")
   );
 
-  const { data, isLoading, error } = useSWR<Row[]>(
+  const { data, error } = useSWR<Row[]>(
     `/market/popular?market=${market}&sort=${sort}&limit=10`,
     fetcher,
     {
@@ -134,10 +134,13 @@ function PopularPanel({
         {/* 일시적 에러/빈 응답이여도 이전 데이터가 있으면 그대로 보여줌 (깜빡임 방지) */}
         {error && !displayData?.length ? (
           <div className="p-6 text-center text-xs text-red-500">불러오기 실패</div>
-        ) : isLoading && !displayData ? (
-          <div className="p-6 text-center text-xs text-ink-3">불러오는 중…</div>
         ) : !displayData?.length ? (
-          <div className="p-6 text-center text-xs text-ink-3">데이터 없음</div>
+          // 콜드 부팅 첫 fetch — 부정확한 폴백을 보여주지 않고 로딩 상태 유지
+          // (SWR 4초 polling이 백그라운드에서 fetch 완료를 받아옴)
+          <div className="flex flex-col items-center gap-2 p-6 text-center text-xs text-ink-3">
+            <div className="h-4 w-4 animate-spin rounded-full border-2 border-bg-3 border-t-ink-2" />
+            <span>데이터 불러오는 중…</span>
+          </div>
         ) : (
           <ul className="divide-y divide-bg-3">
             {displayData.map((r, i) => {

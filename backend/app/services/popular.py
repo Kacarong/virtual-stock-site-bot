@@ -80,22 +80,20 @@ def _spawn_bg_refresh(market: str) -> None:
 
 
 def _immediate_fallback(market: str, sort: Sort, limit: int) -> list[dict] | None:
-    """즉시 응답 가능한 데이터 찾기 — 메모리 캐시(디스크 백업 포함) 우선.
+    """즉시 응답 가능한 정확한 데이터 찾기 — 메모리 캐시(디스크 백업 포함)만.
 
-    DB Price 폴백은 거래대금/거래량이 0이라 정렬이 부정확하므로 최후 수단.
+    DB Price 폴백은 거래대금/거래량이 0이라 정렬 순서가 엉뚱하게 나옴
+    (가나다 순) → 사용자가 잘못된 1위로 오인. 부정확할 바엔 차라리 빈 응답.
     """
     sort_keys = ("value", "volume", "change", "decline", "market_cap")
-    # 1) 정확한 sort 캐시 (만료라도)
+    # 1) 정확한 sort 캐시 (만료라도) — 이 sort에 맞춰 저장됐던 정확한 순서
     if (entry := _cache.get((market, sort))):
         return _sort_rows(list(entry[1]), sort)[:limit]
-    # 2) 다른 sort 캐시 (만료 포함) — 같은 row 데이터로 재정렬 가능
+    # 2) 다른 sort 캐시 (만료 포함) — 같은 row 데이터, 단지 정렬키만 바꿔 재정렬
+    #    원본 row에 정확한 volume/value/market_cap이 포함돼 있어 정확한 순서 보장
     for s in sort_keys:
         if (entry := _cache.get((market, s))):
             return _sort_rows(list(entry[1]), sort)[:limit]
-    # 3) DB Price 폴백 (정렬 부정확하지만 "데이터 없음"보단 나음)
-    db_rows = _db_fallback(market, sort, limit)
-    if db_rows:
-        return db_rows
     return None
 
 
