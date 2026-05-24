@@ -30,6 +30,9 @@ async def _fetch_yf_quotes(codes: list[str]) -> dict[str, dict]:
     """
     if not codes:
         return {}
+    # 너무 많으면 yfinance가 느려져 30초 timeout에 잘림 → 상한 적용
+    if len(codes) > 60:
+        codes = codes[:60]
     from concurrent.futures import ThreadPoolExecutor
 
     def _one(code: str) -> tuple[str, dict | None]:
@@ -258,7 +261,7 @@ NAME_KEYWORDS_US: dict[str, list[str]] = {
 _cache: tuple[float, list[dict]] | None = None
 _TTL_FULL = 60.0   # 모든 카테고리 가격이 충분히 채워졌을 때
 _TTL_PARTIAL = 15.0  # 가격 비어있는 게 많을 때 → 짧게
-_lock = asyncio.Lock()
+_refresh_task: asyncio.Task | None = None  # 백그라운드 갱신 핸들 (중복 spawn 방지)
 
 
 def _name_lookup() -> dict[tuple[str, str], str]:
@@ -467,116 +470,150 @@ def _upsert_prices(live: dict[tuple[str, str], dict]) -> None:
         db.close()
 
 
-async def industries() -> list[dict]:
-    """업종별 종목 + 현재가.
+def _build_response_from_db() -> tuple[list[dict], int, int]:
+    """현재 DB 상태만으로 응답 구성 (외부 호출 없음, 빠름)."""
+    db = SessionLocal()
+    try:
+        groups_by_key = _build_groups(db)
+        sym_rows = (
+            db.query(Symbol, Price)
+            .outerjoin(Price, Price.symbol_id == Symbol.id)
+            .filter(Symbol.is_active)
+            .all()
+        )
+        by_mc = {(s.market, s.code): (s, p) for s, p in sym_rows}
+        name_by = _name_lookup()
 
-    1) DB Symbol 자동 분류로 카테고리에 흡수 (시드 + 키워드 매칭)
-    2) 가격 누락 종목은 실시간 batch 조회 후 Price DB upsert
-    3) 가격 충분히 채워졌으면 60s 캐시, 아니면 15s 캐시 (빠른 재시도)
+        out_list: list[dict] = []
+        total = 0
+        priced = 0
+        for key, label, _ in INDUSTRY_GROUPS:
+            codes = groups_by_key.get(key, [])
+            items: list[dict] = []
+            for mkt, code in codes:
+                sp = by_mc.get((mkt, code))
+                name = name_by.get((mkt, code), code)
+                if sp:
+                    s, p = sp
+                    price = float(p.price) if p else None
+                    prev = float(p.prev_close) if (p and p.prev_close) else None
+                    change_pct = (
+                        ((price - prev) / prev * 100)
+                        if (price is not None and prev) else None
+                    )
+                    items.append({
+                        "symbol_id": s.id,
+                        "market": s.market,
+                        "code": s.code,
+                        "name": s.name or name,
+                        "currency": s.currency,
+                        "price": price,
+                        "change_pct": change_pct,
+                    })
+                    if price is not None:
+                        priced += 1
+                else:
+                    items.append({
+                        "symbol_id": None,
+                        "market": mkt,
+                        "code": code,
+                        "name": name,
+                        "currency": "KRW" if mkt in ("KRX", "UPBIT") else "USD",
+                        "price": None,
+                        "change_pct": None,
+                    })
+                total += 1
+            out_list.append({"key": key, "label": label, "items": items})
+        return out_list, priced, total
+    finally:
+        db.close()
+
+
+async def _refresh_prices() -> None:
+    """누락 가격을 외부에서 가져와 DB upsert. 백그라운드에서 도는 무거운 작업."""
+    global _cache
+    db = SessionLocal()
+    try:
+        groups_by_key = _build_groups(db)
+        sym_rows = (
+            db.query(Symbol, Price)
+            .outerjoin(Price, Price.symbol_id == Symbol.id)
+            .filter(Symbol.is_active)
+            .all()
+        )
+        by_mc = {(s.market, s.code): (s, p) for s, p in sym_rows}
+        need_krx: list[str] = []
+        need_us: list[tuple[str, str]] = []
+        need_upbit: list[str] = []
+        for codes in groups_by_key.values():
+            for mkt, code in codes:
+                sp = by_mc.get((mkt, code))
+                if sp and sp[1] is not None:
+                    continue
+                if mkt == "KRX" and code not in need_krx:
+                    need_krx.append(code)
+                elif mkt in ("NASDAQ", "NYSE", "AMEX") and (mkt, code) not in need_us:
+                    need_us.append((mkt, code))
+                elif mkt == "UPBIT" and code not in need_upbit:
+                    need_upbit.append(code)
+    finally:
+        db.close()
+
+    if not (need_krx or need_us or need_upbit):
+        logger.debug("industries refresh: 모든 가격이 이미 DB에 있음")
+    else:
+        try:
+            live = await _fetch_live_quotes(need_krx, need_us, need_upbit)
+            _upsert_prices(live)
+        except Exception as e:
+            logger.warning("industries refresh failed: {}", e)
+
+    # 캐시 갱신 (DB에서 최신 결과 재구성)
+    out_list, priced, total = _build_response_from_db()
+    ratio = (priced / total) if total else 0.0
+    ttl_used = _TTL_FULL if ratio >= 0.7 else _TTL_PARTIAL
+    _cache = (time.time() - (_TTL_FULL - ttl_used), out_list)
+    logger.info(
+        "industries refreshed: {}/{} priced ({:.0%}), ttl={}s",
+        priced, total, ratio, ttl_used,
+    )
+
+
+def _spawn_refresh() -> None:
+    """동일 시점에 중복 spawn 방지."""
+    global _refresh_task
+    if _refresh_task is not None and not _refresh_task.done():
+        return  # 이미 도는 중
+    try:
+        loop = asyncio.get_event_loop()
+        _refresh_task = loop.create_task(_refresh_prices())
+    except RuntimeError:
+        pass  # 이벤트 루프 없음 (테스트 환경)
+
+
+async def industries() -> list[dict]:
+    """업종별 종목 + 현재가 — stale-while-revalidate.
+
+    - 캐시 fresh: 즉시 반환
+    - 캐시 stale: 즉시 반환 + 백그라운드 갱신
+    - 캐시 없음(cold): DB 스냅샷 즉시 반환 + 백그라운드 갱신
+      (가격은 null인 채로 빠르게 응답, 다음 호출에 채워짐)
     """
     global _cache
-    if _cache and (time.time() - _cache[0]) < _TTL_FULL:
+    if _cache:
+        age = time.time() - _cache[0]
+        if age < _TTL_FULL:
+            return _cache[1]
+        # stale → 즉시 반환 + 백그라운드 갱신
+        _spawn_refresh()
         return _cache[1]
 
-    async with _lock:
-        if _cache and (time.time() - _cache[0]) < _TTL_FULL:
-            return _cache[1]
-
-        db = SessionLocal()
-        try:
-            groups_by_key = _build_groups(db)
-
-            sym_rows = (
-                db.query(Symbol, Price)
-                .outerjoin(Price, Price.symbol_id == Symbol.id)
-                .filter(Symbol.is_active)
-                .all()
-            )
-            by_mc: dict[tuple[str, str], tuple[Symbol, Price | None]] = {}
-            for s, p in sym_rows:
-                by_mc[(s.market, s.code)] = (s, p)
-
-            need_krx: list[str] = []
-            need_us: list[tuple[str, str]] = []
-            need_upbit: list[str] = []
-            for codes in groups_by_key.values():
-                for mkt, code in codes:
-                    sp = by_mc.get((mkt, code))
-                    if sp and sp[1] is not None:
-                        continue
-                    if mkt == "KRX" and code not in need_krx:
-                        need_krx.append(code)
-                    elif mkt in ("NASDAQ", "NYSE", "AMEX") and (mkt, code) not in need_us:
-                        need_us.append((mkt, code))
-                    elif mkt == "UPBIT" and code not in need_upbit:
-                        need_upbit.append(code)
-        finally:
-            db.close()
-
-        live = await _fetch_live_quotes(need_krx, need_us, need_upbit)
-        _upsert_prices(live)
-
-        # 응답 구성
-        db = SessionLocal()
-        try:
-            sym_rows = (
-                db.query(Symbol, Price)
-                .outerjoin(Price, Price.symbol_id == Symbol.id)
-                .filter(Symbol.is_active)
-                .all()
-            )
-            by_mc = {(s.market, s.code): (s, p) for s, p in sym_rows}
-            name_by = _name_lookup()
-
-            out_list: list[dict] = []
-            total_items = 0
-            priced_items = 0
-            for key, label, _ in INDUSTRY_GROUPS:
-                codes = groups_by_key.get(key, [])
-                items: list[dict] = []
-                for mkt, code in codes:
-                    sp = by_mc.get((mkt, code))
-                    name = name_by.get((mkt, code), code)
-                    if sp:
-                        s, p = sp
-                        price = float(p.price) if p else None
-                        prev = float(p.prev_close) if (p and p.prev_close) else None
-                        change_pct = (
-                            ((price - prev) / prev * 100)
-                            if (price is not None and prev) else None
-                        )
-                        items.append({
-                            "symbol_id": s.id,
-                            "market": s.market,
-                            "code": s.code,
-                            "name": s.name or name,
-                            "currency": s.currency,
-                            "price": price,
-                            "change_pct": change_pct,
-                        })
-                        if price is not None:
-                            priced_items += 1
-                    else:
-                        items.append({
-                            "symbol_id": None,
-                            "market": mkt,
-                            "code": code,
-                            "name": name,
-                            "currency": "KRW" if mkt in ("KRX", "UPBIT") else "USD",
-                            "price": None,
-                            "change_pct": None,
-                        })
-                    total_items += 1
-                out_list.append({"key": key, "label": label, "items": items})
-        finally:
-            db.close()
-
-        # 가격이 70% 이상 채워지면 풀 캐시, 아니면 짧은 캐시
-        ratio = (priced_items / total_items) if total_items else 0.0
-        ttl = _TTL_FULL if ratio >= 0.7 else _TTL_PARTIAL
-        _cache = (time.time() - (_TTL_FULL - ttl), out_list)
-        logger.info(
-            "industries built: {}/{} priced ({:.0%}), ttl={}s",
-            priced_items, total_items, ratio, ttl,
-        )
-        return out_list
+    # cold → DB 즉시 응답 + 백그라운드 갱신
+    out_list, priced, total = _build_response_from_db()
+    _cache = (time.time() - _TTL_FULL + _TTL_PARTIAL, out_list)
+    _spawn_refresh()
+    logger.info(
+        "industries cold start: {}/{} priced (background refresh kicked)",
+        priced, total,
+    )
+    return out_list

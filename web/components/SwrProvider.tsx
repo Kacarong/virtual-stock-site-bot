@@ -19,6 +19,10 @@ export function SwrProvider({ children }: { children: React.ReactNode }) {
         shouldRetryOnError: true,
         errorRetryInterval: 2000,
         errorRetryCount: 30,
+        // 페이지 이동 후 돌아왔을 때 이전 데이터 유지 (빈 화면 깜박임 방지)
+        keepPreviousData: true,
+        // 짧은 시간 내 동일 키 중복 호출 방지
+        dedupingInterval: 2000,
         // 4xx (특히 404) 도 재시도. 401만 즉시 중단(로그인 페이지로 보내야 함).
         onErrorRetry: (error, _key, _cfg, revalidate, { retryCount }) => {
           const msg = (error?.message || "").toString();

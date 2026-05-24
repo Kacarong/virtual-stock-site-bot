@@ -106,6 +106,7 @@ export default function Home() {
   const [fxOpen, setFxOpen] = useState(false);
   const { data, error, isLoading, mutate } = useSWR<Portfolio>("/portfolio", fetcher, {
     refreshInterval: 5000,
+    keepPreviousData: true,
   });
 
   if (error?.message?.includes("401")) {
@@ -113,8 +114,13 @@ export default function Home() {
     return null;
   }
 
-  if (isLoading || !data) {
-    return <div className="p-8 text-sm text-ink-3">불러오는 중…</div>;
+  // data 없을 때만 로딩 표시 (페이지 재진입 시 이전 데이터 유지)
+  if (!data) {
+    return (
+      <div className="p-8 text-sm text-ink-3">
+        {isLoading ? "불러오는 중…" : "데이터를 가져오는 중입니다…"}
+      </div>
+    );
   }
 
   const s = data.summary;
