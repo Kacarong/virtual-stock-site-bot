@@ -1,12 +1,14 @@
-"""인증 라우터: Discord OAuth + DEV 로그인."""
+"""인증 라우터: Discord OAuth + 관리자 ID/PW + DEV 로그인."""
 from __future__ import annotations
 
+import hmac
 import secrets
 import urllib.parse
 
 import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import RedirectResponse
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..auth import (
@@ -19,6 +21,9 @@ from ..auth import (
 from ..config import settings
 from ..db import get_db
 from ..models import User
+
+# 관리자 계정용 가상 discord_id (Discord 19자리 숫자와 충돌 안 함)
+ADMIN_DISCORD_ID = "admin:local"
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -57,6 +62,49 @@ def me(user: User = Depends(current_user)) -> dict:
 def logout(resp: Response) -> dict:
     resp.delete_cookie(SESSION_COOKIE)
     return {"ok": True}
+
+
+# --- 관리자 ID/PW 로그인 -------------------------------------------
+
+class AdminLoginBody(BaseModel):
+    username: str
+    password: str
+
+
+@router.post("/admin-login")
+def admin_login(
+    body: AdminLoginBody,
+    response: Response,
+    db: Session = Depends(get_db),
+) -> dict:
+    """단일 관리자 계정 로그인 (Discord 불필요).
+
+    config의 ADMIN_USERNAME/ADMIN_PASSWORD와 일치 시 세션 발급.
+    """
+    # 타이밍 공격 방지용 상수시간 비교
+    ok_user = hmac.compare_digest(body.username, settings.ADMIN_USERNAME)
+    ok_pw = hmac.compare_digest(body.password, settings.ADMIN_PASSWORD)
+    if not (ok_user and ok_pw):
+        raise HTTPException(status_code=401, detail="아이디 또는 비밀번호가 올바르지 않습니다")
+
+    user = db.query(User).filter(User.discord_id == ADMIN_DISCORD_ID).first()
+    if not user:
+        user = get_or_create_user(
+            db,
+            discord_id=ADMIN_DISCORD_ID,
+            username=settings.ADMIN_USERNAME,
+            avatar_url=None,
+        )
+    if not user.is_admin:
+        user.is_admin = True
+        db.commit()
+    _set_session(response, user.id)
+    return {
+        "ok": True,
+        "user_id": user.id,
+        "username": user.username,
+        "is_admin": True,
+    }
 
 
 # --- DEV 로그인 (DEV_LOGIN=true 일 때만) ----------------------------

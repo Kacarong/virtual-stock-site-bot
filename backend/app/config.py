@@ -9,9 +9,13 @@ class Settings(BaseSettings):
 
     # 공통
     SECRET_KEY: str = "change-me"
-    DEV_LOGIN: bool = True
+    DEV_LOGIN: bool = False  # 운영에선 꺼둠 (관리자 로그인으로 대체)
     INITIAL_CASH_KRW: int = 50_000_000
     ADMIN_DISCORD_IDS: str = ""  # comma-separated
+
+    # 관리자 ID/PW 로그인 (Discord 없이 들어올 수 있는 단일 admin 계정)
+    ADMIN_USERNAME: str = "kacarong12"
+    ADMIN_PASSWORD: str = "96574258AAaa@"
 
     # DB
     DATABASE_URL: str = "sqlite:////data/papertrade.db"
