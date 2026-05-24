@@ -8,10 +8,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import math
 import time
 from datetime import datetime
 from decimal import Decimal
+from pathlib import Path
 from typing import Literal
 
 from loguru import logger
@@ -78,14 +80,19 @@ def _spawn_bg_refresh(market: str) -> None:
 
 
 def _immediate_fallback(market: str, sort: Sort, limit: int) -> list[dict] | None:
-    """캐시(만료 포함) → DB Price 순으로 즉시 응답 가능한 데이터 찾기."""
-    # 1) 만료된 메모리 캐시
+    """즉시 응답 가능한 데이터 찾기 — 메모리 캐시(디스크 백업 포함) 우선.
+
+    DB Price 폴백은 거래대금/거래량이 0이라 정렬이 부정확하므로 최후 수단.
+    """
     sort_keys = ("value", "volume", "change", "decline", "market_cap")
+    # 1) 정확한 sort 캐시 (만료라도)
+    if (entry := _cache.get((market, sort))):
+        return _sort_rows(list(entry[1]), sort)[:limit]
+    # 2) 다른 sort 캐시 (만료 포함) — 같은 row 데이터로 재정렬 가능
     for s in sort_keys:
-        stale = _cache.get((market, s))
-        if stale:
-            return _sort_rows(list(stale[1]), sort)[:limit]
-    # 2) DB Price 폴백
+        if (entry := _cache.get((market, s))):
+            return _sort_rows(list(entry[1]), sort)[:limit]
+    # 3) DB Price 폴백 (정렬 부정확하지만 "데이터 없음"보단 나음)
     db_rows = _db_fallback(market, sort, limit)
     if db_rows:
         return db_rows
@@ -151,8 +158,62 @@ def _cached(key: tuple[str, str]) -> list[dict] | None:
     return data
 
 
+# ------------------------------------------------------------------ 디스크 백업
+# 메모리 _cache 를 그대로 JSON으로 dump해서 디스크에 보관.
+# 컨테이너 재시작 후에도 마지막 정확한 데이터(거래대금/순서 포함)로
+# 즉시 응답 가능 → "이상한 데이터 보였다가 수정" 현상 제거.
+
+_DISK_CACHE_PATH = Path("/data/popular_cache.json")
+_last_disk_save = 0.0
+_DISK_SAVE_THROTTLE = 5.0  # 5초에 한 번만 disk write
+
+
 def _store(key: tuple[str, str], data: list[dict]) -> None:
     _cache[key] = (time.time(), data)
+
+
+def _persist_cache_to_disk() -> None:
+    """현재 _cache 전체를 JSON으로 디스크에 저장 (throttled)."""
+    global _last_disk_save
+    now = time.time()
+    if now - _last_disk_save < _DISK_SAVE_THROTTLE:
+        return
+    _last_disk_save = now
+    try:
+        _DISK_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        serializable = {
+            f"{m}|{s}": [ts, data] for (m, s), (ts, data) in _cache.items()
+        }
+        tmp = _DISK_CACHE_PATH.with_suffix(".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(serializable, f)
+        tmp.replace(_DISK_CACHE_PATH)
+    except Exception as e:
+        logger.debug("popular cache save fail: {}", e)
+
+
+def load_disk_cache() -> None:
+    """startup 시 호출 — 디스크에서 _cache 복원.
+
+    캐시가 만료(TTL) 됐어도 일단 _cache에 넣어두면, immediate_fallback
+    경로가 stale로 즉시 응답할 수 있다.
+    """
+    try:
+        if not _DISK_CACHE_PATH.exists():
+            return
+        with open(_DISK_CACHE_PATH, encoding="utf-8") as f:
+            loaded = json.load(f)
+        n = 0
+        for k, v in loaded.items():
+            if "|" not in k:
+                continue
+            m, s = k.split("|", 1)
+            ts, data = v
+            _cache[(m, s)] = (float(ts), data)
+            n += 1
+        logger.info("popular disk cache loaded: {} keys", n)
+    except Exception as e:
+        logger.warning("popular cache load fail: {}", e)
 
 
 def _persist_prices(market: str, rows: list[dict]) -> None:
@@ -297,6 +358,7 @@ async def popular_upbit(sort: Sort, limit: int = 30) -> list[dict]:
     if out:
         for s in ("value", "volume", "change", "decline"):
             _store(("UPBIT", s), _sort_rows(list(out), s))  # type: ignore
+        _persist_cache_to_disk()
         return _sort_rows(out, sort)[:limit]
 
     # 모든 소스 실패 → 만료된 캐시라도 있으면 stale로 반환
@@ -598,7 +660,8 @@ async def popular_krx(sort: Sort, limit: int = 30, *, _force_full: bool = False)
     if out:
         for s in ("value", "volume", "change", "decline", "market_cap"):
             _store(("KRX", s), _sort_rows(list(out), s))  # type: ignore
-        _persist_prices("KRX", out)  # DB에도 저장 → 다음 폴백
+        _persist_prices("KRX", out)  # DB Price 보조 폴백
+        _persist_cache_to_disk()      # 메인: 메모리 캐시 통째 디스크 저장
         return _sort_rows(out, sort)[:limit]
 
     # 모든 소스 실패 → 만료된 메모리 캐시라도 있으면 stale로 반환
@@ -785,7 +848,8 @@ async def popular_us(sort: Sort, limit: int = 30, *, _force_full: bool = False) 
             for s in ("value", "volume", "change", "decline", "market_cap"):
                 if s != sort:
                     _store(("US", s), _sort_rows(list(out), s))  # type: ignore
-            _persist_prices("US", out)  # DB에도 저장
+            _persist_prices("US", out)
+            _persist_cache_to_disk()
             return _sort_rows(out, sort)[:limit]
 
         # 모든 소스 실패 → 만료된 메모리 캐시라도 있으면 stale로 반환

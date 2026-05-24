@@ -60,7 +60,11 @@ async def on_startup() -> None:
     # 인기 종목 + 차트 히스토리 워밍업
     import asyncio as _aio
     from .services.history import get_history as _get_history
+    from .services.popular import load_disk_cache as _load_disk_cache
     from .services.popular import popular as _popular
+
+    # 디스크에 백업된 마지막 정확한 popular 데이터 로드 (재시작 직후 즉시 응답용)
+    _load_disk_cache()
 
     async def _warmup() -> None:
         # KRX 전종목 마스터 동기화 (KOSPI+KOSDAQ 약 2500종목, 검색 풀세트 확보)
