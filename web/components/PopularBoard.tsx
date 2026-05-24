@@ -119,7 +119,8 @@ function PopularPanel({
       )}
 
       <div className="flex-1">
-        {error ? (
+        {/* 일시적 에러여도 이전 데이터가 있으면 그대로 보여줌 (깜빡임 방지) */}
+        {error && !data?.length ? (
           <div className="p-6 text-center text-xs text-red-500">불러오기 실패</div>
         ) : isLoading && !data ? (
           <div className="p-6 text-center text-xs text-ink-3">불러오는 중…</div>
