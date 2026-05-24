@@ -35,6 +35,9 @@ _TTL = {"UPBIT": 10.0, "KRX": 60.0, "US": 60.0}
 # 동시 호출 시 중복 fetch 방지용 in-flight 락 (느린 KRX/US용)
 _inflight: dict[str, asyncio.Lock] = {}
 
+# 백그라운드 갱신 task 추적 (이미 도는 중이면 새로 띄우지 않음)
+_bg_refresh: dict[str, asyncio.Task] = {}
+
 
 def _lock_for(market: str) -> asyncio.Lock:
     lk = _inflight.get(market)
@@ -42,6 +45,51 @@ def _lock_for(market: str) -> asyncio.Lock:
         lk = asyncio.Lock()
         _inflight[market] = lk
     return lk
+
+
+def _spawn_bg_refresh(market: str) -> None:
+    """백그라운드 popular fetch를 띄움 (이미 도는 중이면 무시).
+
+    화면이 stale/DB 폴백으로 즉시 뜨는 동안 진짜 데이터를 가져와 캐시 채움.
+    _force_full=True로 호출하여 폴백 단축경로를 건너뛰고 실제 fetch 수행.
+    """
+    existing = _bg_refresh.get(market)
+    if existing and not existing.done():
+        return
+
+    async def _go() -> None:
+        try:
+            if market == "KRX":
+                await popular_krx("value", 30, _force_full=True)
+            elif market == "US":
+                await popular_us("value", 30, _force_full=True)
+            elif market == "UPBIT":
+                await popular_upbit("value", 30)
+        except Exception as e:
+            logger.debug("bg refresh {} failed: {}", market, e)
+        finally:
+            _bg_refresh.pop(market, None)
+
+    try:
+        loop = asyncio.get_running_loop()
+        _bg_refresh[market] = loop.create_task(_go())
+    except RuntimeError:
+        pass
+
+
+def _immediate_fallback(market: str, sort: Sort, limit: int) -> list[dict] | None:
+    """캐시(만료 포함) → DB Price 순으로 즉시 응답 가능한 데이터 찾기."""
+    # 1) 만료된 메모리 캐시
+    sort_keys = ("value", "volume", "change", "decline", "market_cap")
+    for s in sort_keys:
+        stale = _cache.get((market, s))
+        if stale:
+            return _sort_rows(list(stale[1]), sort)[:limit]
+    # 2) DB Price 폴백
+    db_rows = _db_fallback(market, sort, limit)
+    if db_rows:
+        return db_rows
+    return None
 
 
 # popular US용 인기 ~120개 (시드 396개 중 시총/거래량 상위)
@@ -262,20 +310,28 @@ async def popular_upbit(sort: Sort, limit: int = 30) -> list[dict]:
 
 # ------------------------------------------------------------------ KRX
 
-async def popular_krx(sort: Sort, limit: int = 30) -> list[dict]:
+async def popular_krx(sort: Sort, limit: int = 30, *, _force_full: bool = False) -> list[dict]:
     key = ("KRX", sort)
     if (c := _cached(key)) is not None:
         return c[:limit]
 
     lock = _lock_for("KRX")
-    if lock.locked():
-        # 다른 sort 캐시(stale 포함)로 즉시 응답 — 무한 로딩 방지
-        for s in ("value", "volume", "change", "decline", "market_cap"):
-            stale = _cache.get(("KRX", s))
-            if stale:
-                return _sort_rows(list(stale[1]), sort)[:limit]
+
+    if not _force_full:
+        # stale-while-revalidate: 즉시 응답 가능한 폴백 → 백그라운드 갱신 후 즉시 반환
+        fallback = _immediate_fallback("KRX", sort, limit)
+        if fallback is not None:
+            if not lock.locked():
+                _spawn_bg_refresh("KRX")
+            return fallback
+
+        # 폴백도 없음 (진짜 콜드 부팅) → 백그라운드에 fetch 떠넘기고 즉시 빈 응답
+        # SWR이 4초 polling으로 다음 호출에 받아감 (사용자 멍하니 대기 방지)
+        if not lock.locked():
+            _spawn_bg_refresh("KRX")
         return []
 
+    # _force_full=True: 백그라운드 task에서 호출됨 — 진짜 fetch 실행
     async with lock:
         if (c := _cached(("KRX", sort))) is not None:
             return c[:limit]
@@ -582,21 +638,27 @@ def _sort_rows(rows: list[dict], sort: Sort) -> list[dict]:
     return rows
 
 
-async def popular_us(sort: Sort, limit: int = 30) -> list[dict]:
+async def popular_us(sort: Sort, limit: int = 30, *, _force_full: bool = False) -> list[dict]:
     # 캐시 적중 시 즉시 반환
-    for s in ("value", "volume", "change"):
-        if (c := _cached(("US", s))) is not None and s == sort:
-            return c[:limit]
+    if (c := _cached(("US", sort))) is not None:
+        return c[:limit]
 
     lock = _lock_for("US")
-    # 락이 잠겨 있으면 기존 캐시(만료라도) 반환 — 무한 로딩 방지
-    if lock.locked():
-        for s in ("value", "volume", "change"):
-            stale = _cache.get(("US", s))
-            if stale:
-                return _sort_rows(list(stale[1]), sort)[:limit]
+
+    if not _force_full:
+        # stale-while-revalidate: 즉시 응답 가능한 폴백 → 백그라운드 갱신 후 즉시 반환
+        fallback = _immediate_fallback("US", sort, limit)
+        if fallback is not None:
+            if not lock.locked():
+                _spawn_bg_refresh("US")
+            return fallback
+
+        # 폴백도 없음 → 백그라운드에 fetch 떠넘기고 즉시 빈 응답
+        if not lock.locked():
+            _spawn_bg_refresh("US")
         return []
 
+    # _force_full=True: 백그라운드 task에서 호출됨 — 진짜 fetch 실행
     async with lock:
         # 락 진입 후 한 번 더 확인 (다른 호출이 방금 채웠을 수 있음)
         if (c := _cached(("US", sort))) is not None:
