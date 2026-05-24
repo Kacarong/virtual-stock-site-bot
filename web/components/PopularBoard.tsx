@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import useSWR from "swr";
 import { api, fmtPrice, pctClass } from "@/lib/api";
 import { useUsdToKrw } from "@/lib/useUsdToKrw";
@@ -68,6 +68,18 @@ function PopularPanel({
     }
   );
 
+  // 백엔드가 일시적으로 빈 배열을 반환해도 마지막 성공 데이터를 화면에 유지
+  // (sort 변경 시에는 ref 리셋 — 새 정렬 데이터를 받기 전까지 잠깐 stale 표기)
+  const lastGoodRef = useRef<Row[] | null>(null);
+  useEffect(() => {
+    if (data && data.length > 0) lastGoodRef.current = data;
+  }, [data]);
+  useEffect(() => {
+    lastGoodRef.current = null;
+  }, [sort]);
+  const displayData =
+    data && data.length > 0 ? data : lastGoodRef.current ?? data;
+
   // 환율 (US 패널만)
   const { data: fx } = useSWR<{ usdkrw: string }>(
     market === "US" ? "/portfolio" : null,
@@ -119,16 +131,16 @@ function PopularPanel({
       )}
 
       <div className="flex-1">
-        {/* 일시적 에러여도 이전 데이터가 있으면 그대로 보여줌 (깜빡임 방지) */}
-        {error && !data?.length ? (
+        {/* 일시적 에러/빈 응답이여도 이전 데이터가 있으면 그대로 보여줌 (깜빡임 방지) */}
+        {error && !displayData?.length ? (
           <div className="p-6 text-center text-xs text-red-500">불러오기 실패</div>
-        ) : isLoading && !data ? (
+        ) : isLoading && !displayData ? (
           <div className="p-6 text-center text-xs text-ink-3">불러오는 중…</div>
-        ) : !data?.length ? (
+        ) : !displayData?.length ? (
           <div className="p-6 text-center text-xs text-ink-3">데이터 없음</div>
         ) : (
           <ul className="divide-y divide-bg-3">
-            {data.map((r, i) => {
+            {displayData.map((r, i) => {
               const priceNum =
                 r.price === null || r.price === undefined
                   ? null

@@ -148,7 +148,15 @@ async def popular_upbit(sort: Sort, limit: int = 30) -> list[dict]:
     if out:
         for s in ("value", "volume", "change", "decline"):
             _store(("UPBIT", s), _sort_rows(list(out), s))  # type: ignore
-    return _sort_rows(out, sort)[:limit]
+        return _sort_rows(out, sort)[:limit]
+
+    # 모든 소스 실패 → 만료된 캐시라도 있으면 stale로 반환
+    for s in ("value", "volume", "change", "decline"):
+        stale = _cache.get(("UPBIT", s))
+        if stale:
+            logger.warning("UPBIT popular: source failed, returning stale cache")
+            return _sort_rows(list(stale[1]), sort)[:limit]
+    return []
 
 
 # ------------------------------------------------------------------ KRX
@@ -433,8 +441,15 @@ async def popular_krx(sort: Sort, limit: int = 30) -> list[dict]:
     if out:
         for s in ("value", "volume", "change", "decline", "market_cap"):
             _store(("KRX", s), _sort_rows(list(out), s))  # type: ignore
+        return _sort_rows(out, sort)[:limit]
 
-    return _sort_rows(out, sort)[:limit]
+    # 모든 소스 실패 → 만료된 캐시라도 있으면 stale로 반환 (화면 깜빡임 방지)
+    for s in ("value", "volume", "change", "decline", "market_cap"):
+        stale = _cache.get(("KRX", s))
+        if stale:
+            logger.warning("KRX popular: all sources failed, returning stale cache")
+            return _sort_rows(list(stale[1]), sort)[:limit]
+    return []
 
 
 # ------------------------------------------------------------------ US
@@ -600,7 +615,15 @@ async def popular_us(sort: Sort, limit: int = 30) -> list[dict]:
             for s in ("value", "volume", "change", "decline", "market_cap"):
                 if s != sort:
                     _store(("US", s), _sort_rows(list(out), s))  # type: ignore
-        return _sort_rows(out, sort)[:limit]
+            return _sort_rows(out, sort)[:limit]
+
+        # 모든 소스 실패 → 만료된 캐시라도 있으면 stale로 반환
+        for s in ("value", "volume", "change", "decline", "market_cap"):
+            stale = _cache.get(("US", s))
+            if stale:
+                logger.warning("US popular: all sources failed, returning stale cache")
+                return _sort_rows(list(stale[1]), sort)[:limit]
+        return []
 
 
 # US 시총용 shares outstanding 캐시 (1시간 TTL)
