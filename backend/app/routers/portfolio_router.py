@@ -94,25 +94,32 @@ async def ranking(
 
     - Price DB(인터넷 끊기더라도 마지막 가격 유지)로 평가
     - 현금 + 평가금
+    - 단일 join 쿼리로 N+1 제거 (사용자×보유 한 번에 페치)
     """
     rate = await get_usdkrw()
     users = db.query(User).all()
+
+    # 한 번에 모든 보유종목 + Symbol + Price join
+    rows = (
+        db.query(Holding, Symbol, Price)
+        .join(Symbol, Symbol.id == Holding.symbol_id)
+        .outerjoin(Price, Price.symbol_id == Symbol.id)
+        .filter(Holding.qty > 0)
+        .all()
+    )
+
+    # user_id별로 평가금 합계 집계
+    value_by_user: dict[int, Decimal] = defaultdict(lambda: Decimal("0"))
+    for h, s, p in rows:
+        cur_price = p.price if p else h.avg_cost
+        v = cur_price * h.qty
+        if s.currency == "USD":
+            v = v * rate
+        value_by_user[h.user_id] += v
+
     out: list[dict] = []
     for u in users:
-        rows = (
-            db.query(Holding, Symbol, Price)
-            .join(Symbol, Symbol.id == Holding.symbol_id)
-            .outerjoin(Price, Price.symbol_id == Symbol.id)
-            .filter(Holding.user_id == u.id, Holding.qty > 0)
-            .all()
-        )
-        value_krw = Decimal("0")
-        for h, s, p in rows:
-            cur_price = p.price if p else h.avg_cost
-            v = cur_price * h.qty
-            if s.currency == "USD":
-                v = v * rate
-            value_krw += v
+        value_krw = value_by_user.get(u.id, Decimal("0"))
         cash_total = u.cash_krw + u.cash_usd * rate
         total = value_krw + cash_total
         out.append(

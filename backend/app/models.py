@@ -183,3 +183,9 @@ class MarketCalendar(Base):
 
 Index("ix_price_ts", Price.ts)
 Index("ix_order_status_type", Order.status, Order.order_type)
+# 검색·자동분류에서 자주 쓰임 (is_active 필터링)
+Index("ix_symbol_active_market", Symbol.is_active, Symbol.market)
+# 사용자별 주문 시간순 조회
+Index("ix_order_user_created", Order.user_id, Order.created_at)
+# 주문 매칭 루프에서 PENDING 후보 빠르게
+Index("ix_order_symbol_status", Order.symbol_id, Order.status)

@@ -52,7 +52,7 @@ async def _fetch_yf_quotes(codes: list[str]) -> dict[str, dict]:
         except Exception:
             return code, None
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     with ThreadPoolExecutor(max_workers=20) as ex:
         tasks = [loop.run_in_executor(ex, _one, c) for c in codes]
         results = await asyncio.gather(*tasks)
@@ -585,10 +585,14 @@ def _spawn_refresh() -> None:
     if _refresh_task is not None and not _refresh_task.done():
         return  # 이미 도는 중
     try:
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         _refresh_task = loop.create_task(_refresh_prices())
     except RuntimeError:
-        pass  # 이벤트 루프 없음 (테스트 환경)
+        # 실행 중 루프 없음 (테스트/스크립트) — 폴백
+        try:
+            _refresh_task = asyncio.ensure_future(_refresh_prices())
+        except Exception:
+            pass
 
 
 async def industries() -> list[dict]:

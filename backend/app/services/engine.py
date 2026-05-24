@@ -71,6 +71,8 @@ async def place_order(
         raise OrderError("limit_price required for LIMIT")
     if order_type == "SCHEDULED" and not scheduled_at:
         raise OrderError("scheduled_at required for SCHEDULED")
+    if order_type == "SCHEDULED" and scheduled_at <= datetime.utcnow():
+        raise OrderError("scheduled_at must be in the future")
 
     sym = db.get(Symbol, symbol_id)
     if not sym or not sym.is_active:
