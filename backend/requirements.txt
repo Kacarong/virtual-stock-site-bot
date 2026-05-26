@@ -1,5 +1,6 @@
 # Python 3.12 호환 (pykrx가 pkg_resources 의존)
-setuptools>=70
+# setuptools 81부터 pkg_resources 제거됨 → 80 이하로 핀 필수
+setuptools>=70,<81
 
 # Web/API
 fastapi==0.115.0

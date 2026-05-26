@@ -8,8 +8,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml requirements.txt* /app/
+# setuptools 81+에서 pkg_resources 제거됨 → pykrx가 import 실패함
+# requirements.txt 핀과 별개로 base에 강제 설치 (이중 안전장치)
 RUN pip install --no-cache-dir -U pip && \
-    if [ -f requirements.txt ]; then pip install --no-cache-dir -r requirements.txt; fi
+    pip install --no-cache-dir "setuptools>=70,<81" wheel && \
+    if [ -f requirements.txt ]; then pip install --no-cache-dir -r requirements.txt; fi && \
+    python -c "import pkg_resources; print('pkg_resources OK:', pkg_resources.__version__)"
 
 COPY . /app
 

@@ -10,6 +10,10 @@ services:
     volumes:
       - ./backend:/app
       - ./data:/data
+    # 컨테이너에 IPv6 라우팅이 없으면 yfinance/curl_cffi가 IPv6 우선 시도하다
+    # "Network is unreachable" 즉시 실패함 → IPv6 비활성화
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=1
     restart: unless-stopped
 
   worker:
@@ -21,6 +25,8 @@ services:
     volumes:
       - ./backend:/app
       - ./data:/data
+    sysctls:
+      - net.ipv6.conf.all.disable_ipv6=1
     depends_on:
       - api
     restart: unless-stopped
