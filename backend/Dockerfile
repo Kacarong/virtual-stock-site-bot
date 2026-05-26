@@ -13,7 +13,8 @@ COPY pyproject.toml requirements.txt* /app/
 RUN pip install --no-cache-dir -U pip && \
     pip install --no-cache-dir "setuptools>=70,<81" wheel && \
     if [ -f requirements.txt ]; then pip install --no-cache-dir -r requirements.txt; fi && \
-    python -c "import pkg_resources; print('pkg_resources OK:', pkg_resources.__version__)"
+    python -c "import pkg_resources, setuptools; print('pkg_resources OK, setuptools', setuptools.__version__)" && \
+    python -c "from pykrx import stock"
 
 COPY . /app
 
