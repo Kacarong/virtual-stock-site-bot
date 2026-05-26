@@ -398,6 +398,8 @@ async def popular_krx(sort: Sort, limit: int = 30, *, _force_full: bool = False)
 
         def _fetch() -> list[dict]:
             try:
+                from .sources.kis import _patch_requests_for_krx
+                _patch_requests_for_krx()
                 from datetime import datetime, timedelta
 
                 import pandas as _pd  # type: ignore

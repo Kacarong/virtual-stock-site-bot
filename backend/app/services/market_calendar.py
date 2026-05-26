@@ -33,6 +33,8 @@ HOURS = {
 def _krx_holidays_year(year: int) -> set[str]:
     """pykrx로 KRX 휴장일 추출. 실패 시 빈 set."""
     try:
+        from .sources.kis import _patch_requests_for_krx
+        _patch_requests_for_krx()
         from pykrx import stock  # type: ignore
 
         # pykrx는 영업일 리스트를 주므로 전체 일자 차집합으로 휴장일 산출

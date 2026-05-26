@@ -1,6 +1,11 @@
 """yfinance — 미국 주식/ETF.
 
 yfinance는 동기 함수라 스레드풀에서 실행. 호출 빈도는 1초당 5~10회 정도면 안전.
+
+NOTE: 과거에 t.fast_info.last_price 를 1차로 썼는데, yfinance 내부에서
+share count fetch가 깨지면(예: 일부 ETF/지수) fast_info 전체가 None을 뱉어
+가격을 못 받음. 따라서 history(period='5d')를 1차 경로로 쓰고, fast_info는
+이미 캐시된 경우에만 쇼트컷으로 사용.
 """
 from __future__ import annotations
 
@@ -10,6 +15,35 @@ from decimal import Decimal
 from loguru import logger
 
 
+def _extract_from_history(hist) -> tuple[float | None, float | None]:
+    """history DataFrame → (last_close, prev_close)."""
+    try:
+        if hist is None or hist.empty:
+            return None, None
+        closes = hist["Close"].dropna()
+        if len(closes) == 0:
+            return None, None
+        last = float(closes.iloc[-1])
+        prev = float(closes.iloc[-2]) if len(closes) >= 2 else None
+        return last, prev
+    except Exception:
+        return None, None
+
+
+def _try_fast_info(t) -> tuple[float | None, float | None]:
+    """fast_info 쇼트컷. 실패해도 무시."""
+    try:
+        fi = t.fast_info
+        last = getattr(fi, "last_price", None)
+        prev = getattr(fi, "previous_close", None)
+        return (
+            float(last) if last is not None else None,
+            float(prev) if prev is not None else None,
+        )
+    except Exception:
+        return None, None
+
+
 async def fetch_quote(ticker: str) -> dict | None:
     """단일 티커. 실패시 None."""
     def _fetch() -> dict | None:
@@ -17,17 +51,16 @@ async def fetch_quote(ticker: str) -> dict | None:
             import yfinance as yf  # type: ignore
 
             t = yf.Ticker(ticker)
-            # 빠른 핫 패스: fast_info에 lastPrice / previousClose가 있음
-            fi = t.fast_info
-            last = getattr(fi, "last_price", None) or fi.get("lastPrice") if hasattr(fi, "get") else None
-            prev = getattr(fi, "previous_close", None) or fi.get("previousClose") if hasattr(fi, "get") else None
+            # 1차: fast_info 쇼트컷 (성공하면 1콜로 끝남)
+            last, prev = _try_fast_info(t)
+            # 2차: history (fast_info가 깨졌어도 안정적)
             if last is None:
-                # fallback: history
-                hist = t.history(period="1d", interval="1m")
-                if hist.empty:
-                    return None
-                last = float(hist["Close"].iloc[-1])
-                prev = float(hist["Open"].iloc[0])
+                hist = t.history(period="5d", interval="1d")
+                last, prev2 = _extract_from_history(hist)
+                if prev is None:
+                    prev = prev2
+            if last is None:
+                return None
             return {
                 "price": Decimal(str(last)),
                 "prev_close": Decimal(str(prev)) if prev is not None else None,
@@ -40,7 +73,7 @@ async def fetch_quote(ticker: str) -> dict | None:
 
 
 async def fetch_quotes(tickers: list[str]) -> dict[str, dict]:
-    """다수 티커. 내부적으로 yf.Tickers 한 번에 호출."""
+    """다수 티커. yf.download 한 번 호출로 모든 종가 일괄 수신."""
     if not tickers:
         return {}
 
@@ -48,22 +81,61 @@ async def fetch_quotes(tickers: list[str]) -> dict[str, dict]:
         try:
             import yfinance as yf  # type: ignore
 
-            ts = yf.Tickers(" ".join(tickers))
             out: dict[str, dict] = {}
-            for sym in tickers:
+            # 한 번 호출로 모든 티커 5일치 일봉 받음
+            try:
+                df = yf.download(
+                    " ".join(tickers),
+                    period="5d",
+                    interval="1d",
+                    group_by="ticker",
+                    progress=False,
+                    threads=True,
+                    auto_adjust=False,
+                )
+            except Exception as e:
+                logger.warning("yfinance bulk download failed: {}", e)
+                df = None
+
+            if df is not None and not df.empty:
+                # 단일 종목이면 multiindex가 아닐 수 있음
+                multi = (
+                    hasattr(df.columns, "levels")
+                    and len(df.columns.levels) > 1
+                )
+                for sym in tickers:
+                    try:
+                        sub = df[sym] if multi and sym in df.columns.get_level_values(0) else df
+                        last, prev = _extract_from_history(sub)
+                        if last is None:
+                            continue
+                        out[sym] = {
+                            "price": Decimal(str(last)),
+                            "prev_close": Decimal(str(prev)) if prev is not None else None,
+                        }
+                    except Exception as e:
+                        logger.debug("yf bulk {} parse skip: {}", sym, e)
+
+            # 일괄 호출에서 빠진 티커는 개별 history로 한 번 더 시도
+            missing = [s for s in tickers if s not in out]
+            for sym in missing:
                 try:
-                    t = ts.tickers[sym]
-                    fi = t.fast_info
-                    last = getattr(fi, "last_price", None)
-                    prev = getattr(fi, "previous_close", None)
+                    t = yf.Ticker(sym)
+                    last, prev = _try_fast_info(t)
+                    if last is None:
+                        hist = t.history(period="5d", interval="1d")
+                        last, prev2 = _extract_from_history(hist)
+                        if prev is None:
+                            prev = prev2
                     if last is None:
                         continue
                     out[sym] = {
                         "price": Decimal(str(last)),
-                        "prev_close": Decimal(str(prev)) if prev else None,
+                        "prev_close": Decimal(str(prev)) if prev is not None else None,
                     }
                 except Exception as e:
-                    logger.debug("yf {} skipped: {}", sym, e)
+                    logger.debug("yf {} individual skip: {}", sym, e)
+
             return out
         except Exception as e:
             logger.warning("yfinance bulk fetch failed: {}", e)

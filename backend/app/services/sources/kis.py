@@ -24,6 +24,43 @@ from ...config import settings
 BASE_REAL = "https://openapi.koreainvestment.com:9443"
 BASE_VTS = "https://openapivts.koreainvestment.com:29443"
 
+# --- KRX UA monkey patch -------------------------------------------
+# pykrx 내부가 requests 기본 UA(python-requests/X.X)로 호출 → data.krx.co.kr이
+# 403 차단 → pykrx가 빈 DataFrame swallow → "index -1 out of bounds" 에러.
+# Session.request를 1회만 패치해서 KRX 호출에 브라우저 UA + Referer 강제 주입.
+_KRX_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+)
+_KRX_PATCH_APPLIED = False
+
+
+def _patch_requests_for_krx() -> None:
+    """pykrx가 호출하는 requests에 브라우저 헤더 강제 주입 (1회만)."""
+    global _KRX_PATCH_APPLIED
+    if _KRX_PATCH_APPLIED:
+        return
+    try:
+        import requests  # type: ignore
+
+        _orig = requests.Session.request
+
+        def _patched(self, method, url, **kwargs):
+            headers = kwargs.pop("headers", None) or {}
+            # 대소문자 안전한 키 검사
+            keys_lower = {k.lower() for k in headers}
+            if "user-agent" not in keys_lower:
+                headers["User-Agent"] = _KRX_UA
+            if "data.krx.co.kr" in url and "referer" not in keys_lower:
+                headers["Referer"] = "http://data.krx.co.kr/"
+            return _orig(self, method, url, headers=headers, **kwargs)
+
+        requests.Session.request = _patched  # type: ignore[assignment]
+        _KRX_PATCH_APPLIED = True
+        logger.info("requests Session.request patched for KRX UA")
+    except Exception as e:
+        logger.warning("KRX UA patch failed: {}", e)
+
 
 def _base() -> str:
     return BASE_VTS if settings.KIS_ENV == "vts" else BASE_REAL
@@ -350,6 +387,7 @@ async def fetch_price_pykrx(code: str) -> dict | None:
     """KIS 실패 시 pykrx로 최근 영업일 종가 fallback."""
     def _fetch() -> dict | None:
         try:
+            _patch_requests_for_krx()
             from datetime import datetime, timedelta
             from pykrx import stock  # type: ignore
 
@@ -400,6 +438,7 @@ async def fetch_symbol_master_krx() -> list[dict]:
     """
     def _fetch() -> list[dict]:
         try:
+            _patch_requests_for_krx()
             import concurrent.futures as _cf
 
             from pykrx import stock  # type: ignore

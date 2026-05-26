@@ -342,6 +342,8 @@ async def debug(_user: User = Depends(current_user), db: Session = Depends(get_d
     # pykrx 상태
     def _check_pykrx() -> dict:
         try:
+            from ..services.sources.kis import _patch_requests_for_krx
+            _patch_requests_for_krx()
             from datetime import datetime, timedelta
 
             from pykrx import stock  # type: ignore
