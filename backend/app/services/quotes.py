@@ -15,7 +15,7 @@ from decimal import Decimal
 
 from loguru import logger
 
-from .sources import kis, stooq, upbit, yfinance_src
+from .sources import kis, stooq, toss, upbit, yfinance_src
 
 # in-memory 캐시: (market, code) → (ts, quote)
 _ondemand_cache: dict[tuple[str, str], tuple[float, dict]] = {}
@@ -38,13 +38,19 @@ async def fetch_one(market: str, code: str) -> dict | None:
         m = await upbit.fetch_prices([code])
         return m.get(code)
     if market == "KRX":
+        # Toss 주 공급자 → (폴백) KIS → pykrx 종가
+        q = await toss.fetch_price(code)
+        if q:
+            return q
         q = await kis.fetch_price(code)
         if q:
             return q
-        # 장마감/실패 시 pykrx 종가 fallback
         return await kis.fetch_price_pykrx(code)
-    if market in ("NASDAQ", "NYSE"):
-        # KIS 해외주식 (real 키 설정 시) → Stooq → yfinance 순
+    if market in ("NASDAQ", "NYSE", "AMEX"):
+        # Toss 주 공급자 → (폴백) KIS 해외 → Stooq → yfinance
+        q = await toss.fetch_price(code)
+        if q:
+            return q
         q = await kis.fetch_overseas_price(code, market)
         if q:
             return q
@@ -62,8 +68,14 @@ async def fetch_many(market: str, codes: list[str]) -> dict[str, dict]:
     if market == "UPBIT":
         return await upbit.fetch_prices(codes)
     if market == "KRX":
+        q = await toss.fetch_prices(codes)
+        if q:
+            return q
         return await kis.fetch_prices(codes)
-    if market in ("NASDAQ", "NYSE"):
+    if market in ("NASDAQ", "NYSE", "AMEX"):
+        q = await toss.fetch_prices(codes)
+        if q:
+            return q
         return await yfinance_src.fetch_quotes(codes)
     return {}
 

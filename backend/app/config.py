@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     KIS_APP_SECRET: str = ""
     KIS_ACCOUNT_NO: str = ""
 
+    # Toss 증권 Open API (국내+미국 시세 주 공급자)
+    TOSS_API_BASE: str = "https://openapi.tossinvest.com"
+    TOSS_CLIENT_ID: str = ""
+    TOSS_CLIENT_SECRET: str = ""
+
     @property
     def admin_discord_ids(self) -> set[str]:
         return {x.strip() for x in self.ADMIN_DISCORD_IDS.split(",") if x.strip()}

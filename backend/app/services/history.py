@@ -21,6 +21,7 @@ from loguru import logger
 
 from .sources import kis as _kis
 from .sources import stooq as _stooq
+from .sources import toss as _toss
 from .sources import upbit as _upbit
 
 Interval = Literal["1m", "5m", "1h", "1d", "1w", "1mo", "all"]
@@ -201,11 +202,13 @@ async def _krx_history(code: str, interval: Interval) -> list[dict]:
     # 일/분: KIS와 yfinance 동시 호출 → 먼저 도착하는 거 사용
     if interval == "1d":
         return await _race(
+            _toss.fetch_candles(code, "1d", count=180),
             _kis.fetch_daily_candles(code, count=180),
             _yf_history("KRX", code, "6mo", "1d"),
         )
     if interval == "1m":
         return await _race(
+            _toss.fetch_candles(code, "1m", count=200),
             _kis.fetch_minute_candles(code, count=200),
             _yf_history("KRX", code, "5d", "1m"),
         )
@@ -229,12 +232,18 @@ async def _us_history(market: str, code: str, interval: Interval) -> list[dict]:
         if interval == "1mo":
             return _aggregate(rows, "M")
         return rows
-    # 1d: 3개 소스 race
+    # 1d: Toss + 기존 3개 소스 race
     if interval == "1d":
         return await _race(
+            _toss.fetch_candles(code, "1d", count=180),
             _kis.fetch_overseas_daily_candles(code, market, count=180),
             _stooq.fetch_history(code, count=180),
             _yf_history(market, code, "6mo", "1d"),
+        )
+    if interval == "1m":
+        return await _race(
+            _toss.fetch_candles(code, "1m", count=200),
+            _yf_history(market, code, "5d", "1m"),
         )
     period_map = {"1m": "5d", "5m": "5d", "1h": "1mo"}
     yf_interval = {"1m": "1m", "5m": "5m", "1h": "60m"}[interval]

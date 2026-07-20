@@ -10,7 +10,8 @@ from decimal import Decimal
 
 from loguru import logger
 
-from .sources.yfinance_src import fetch_usdkrw
+from .sources.toss import fetch_usdkrw as _toss_usdkrw
+from .sources.yfinance_src import fetch_usdkrw as _yf_usdkrw
 
 _cache: dict = {"rate": Decimal("1350"), "ts": 0.0}  # 기본값
 TTL = 60 * 60  # 1시간
@@ -20,7 +21,9 @@ async def get_usdkrw() -> Decimal:
     now = time.time()
     if now - _cache["ts"] < TTL and _cache["rate"]:
         return _cache["rate"]
-    rate = await fetch_usdkrw()
+    rate = await _toss_usdkrw()
+    if not rate:
+        rate = await _yf_usdkrw()
     if rate:
         _cache["rate"] = rate
         _cache["ts"] = now
