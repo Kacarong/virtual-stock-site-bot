@@ -224,6 +224,80 @@ async def fetch_candles(code: str, interval: str = "1d", count: int = 100) -> li
         return []
 
 
+# --- 랭킹 (인기종목) ------------------------------------------------
+
+# 앱 sort → Toss 랭킹 type. market_cap 은 Toss 미지원(→ 폴백 경로에서 처리).
+_RANKING_TYPE = {
+    "value": "MARKET_TRADING_AMOUNT",
+    "volume": "MARKET_TRADING_VOLUME",
+    "change": "TOP_GAINERS",
+    "decline": "TOP_LOSERS",
+}
+
+
+def _f(v, default: float = 0.0) -> float:
+    try:
+        return float(v)
+    except Exception:
+        return default
+
+
+async def fetch_rankings(
+    market_country: str, sort: str, count: int = 30
+) -> list[dict]:
+    """랭킹(인기종목). market_country='KR'|'US'.
+
+    반환: [{code, price, prev_close, change_pct(%), volume, value}] (순위 순).
+    market_cap 정렬은 Toss 미지원 → [] 반환하여 호출측 폴백을 타게 한다.
+    """
+    if not _configured():
+        return []
+    tp = _RANKING_TYPE.get(sort)
+    if not tp:
+        return []
+    headers = await _auth_headers()
+    if not headers:
+        return []
+    count = max(1, min(count, 100))
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.get(
+                f"{_base()}/api/v1/rankings",
+                params={
+                    "type": tp,
+                    "marketCountry": market_country,
+                    "duration": "1d",
+                    "count": count,
+                },
+                headers=headers,
+            )
+            r.raise_for_status()
+            res = _unwrap(r.json()) or {}
+        rows = res.get("rankings", []) if isinstance(res, dict) else []
+        out: list[dict] = []
+        for row in rows:
+            code = row.get("symbol")
+            price = row.get("price") or {}
+            if not code or price.get("lastPrice") is None:
+                continue
+            cr = price.get("changeRate")
+            change_pct = _f(cr) * 100 if cr not in (None, "") else 0.0
+            out.append(
+                {
+                    "code": code,
+                    "price": _f(price.get("lastPrice")),
+                    "prev_close": _f(price.get("basePrice")),
+                    "change_pct": change_pct,
+                    "volume": _f(row.get("tradingVolume")),
+                    "value": _f(row.get("tradingAmount")),
+                }
+            )
+        return out
+    except Exception as e:
+        logger.debug("Toss rankings failed {} {}: {}", market_country, sort, e)
+        return []
+
+
 # --- 환율 -----------------------------------------------------------
 
 async def fetch_usdkrw() -> Decimal | None:

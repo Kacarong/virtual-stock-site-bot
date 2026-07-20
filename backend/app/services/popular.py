@@ -24,6 +24,7 @@ from ..models import Price, Symbol
 from .krx_marketcap_fallback import KRX_MARKET_CAP_FALLBACK
 from .sources import kis as _kis
 from .sources import stooq as _stooq
+from .sources import toss as _toss
 from .sources import upbit
 from .sources.kr_seeds import KR_SEEDS
 from .sources.us_seeds import US_SEEDS
@@ -370,6 +371,63 @@ async def popular_upbit(sort: Sort, limit: int = 30) -> list[dict]:
 
 # ------------------------------------------------------------------ KRX
 
+async def _toss_popular_rows(country: str, sort: Sort, limit: int) -> list[dict]:
+    """Toss 랭킹으로 인기종목 행 생성. 이름/시장/시총은 DB·시드로 보강.
+
+    country='KR'|'US'. market_cap 정렬은 Toss 미지원(fetch_rankings가 [] 반환) → [].
+    Toss 미설정/실패 시에도 [] → 호출측 기존 폴백 경로가 실행된다.
+    """
+    raw = await _toss.fetch_rankings(country, sort, count=max(limit, 30))
+    if not raw:
+        return []
+    codes = [r["code"] for r in raw]
+
+    def _load_names() -> dict[str, tuple[str | None, str | None]]:
+        db = SessionLocal()
+        try:
+            return {
+                s.code: (s.name, s.market)
+                for s in db.query(Symbol).filter(Symbol.code.in_(codes)).all()
+            }
+        finally:
+            db.close()
+
+    db_info = await asyncio.to_thread(_load_names)
+    kr_seed_name = {code: name for code, name, _, _ in KR_SEEDS}
+    us_seed = {code: (name, mkt) for code, name, mkt, _ in US_SEEDS}
+
+    out: list[dict] = []
+    for r in raw:
+        code = str(r["code"])
+        db_name, db_market = db_info.get(code, (None, None))
+        if country == "KR":
+            name = db_name or kr_seed_name.get(code) or code
+            market = "KRX"
+            cap = KRX_MARKET_CAP_FALLBACK.get(code)
+            market_cap = float(cap) if cap else None
+        else:
+            seed_name, seed_market = us_seed.get(code, (None, None))
+            name = db_name or seed_name or code
+            market = db_market or seed_market or "NASDAQ"
+            market_cap = None
+        price = _safe_float(r.get("price"))
+        if price <= 0:
+            continue
+        out.append(
+            {
+                "market": market,
+                "code": code,
+                "name": name,
+                "price": price,
+                "change_pct": _safe_float(r.get("change_pct")),
+                "volume": _safe_float(r.get("volume")),
+                "value": _safe_float(r.get("value")),
+                "market_cap": market_cap,
+            }
+        )
+    return out
+
+
 async def popular_krx(sort: Sort, limit: int = 30, *, _force_full: bool = False) -> list[dict]:
     key = ("KRX", sort)
     if (c := _cached(key)) is not None:
@@ -395,6 +453,15 @@ async def popular_krx(sort: Sort, limit: int = 30, *, _force_full: bool = False)
     async with lock:
         if (c := _cached(("KRX", sort))) is not None:
             return c[:limit]
+
+        # Toss 랭킹 우선 (market_cap 은 Toss 미지원 → 아래 pykrx 경로)
+        if sort != "market_cap":
+            toss_rows = await _toss_popular_rows("KR", sort, max(limit, 30))
+            if toss_rows:
+                _store(("KRX", sort), _sort_rows(list(toss_rows), sort))
+                _persist_prices("KRX", toss_rows)
+                _persist_cache_to_disk()
+                return _sort_rows(toss_rows, sort)[:limit]
 
         def _fetch() -> list[dict]:
             try:
@@ -726,6 +793,15 @@ async def popular_us(sort: Sort, limit: int = 30, *, _force_full: bool = False) 
         # 락 진입 후 한 번 더 확인 (다른 호출이 방금 채웠을 수 있음)
         if (c := _cached(("US", sort))) is not None:
             return c[:limit]
+
+        # Toss 랭킹 우선 (market_cap 은 Toss 미지원 → 아래 기존 경로)
+        if sort != "market_cap":
+            toss_rows = await _toss_popular_rows("US", sort, max(limit, 30))
+            if toss_rows:
+                _store(("US", sort), _sort_rows(list(toss_rows), sort))
+                _persist_prices("US", toss_rows)
+                _persist_cache_to_disk()
+                return _sort_rows(toss_rows, sort)[:limit]
 
         codes = US_POPULAR_CODES
         name_by = {c: n for c, n, _, _ in US_SEEDS}
