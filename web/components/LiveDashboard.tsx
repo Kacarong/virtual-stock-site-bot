@@ -15,6 +15,7 @@ type Row = {
   volume: number | null;
   value: number | null;
   market_cap?: number | null;
+  symbol_id?: number | null;
 };
 
 type Indicator = {
@@ -175,6 +176,28 @@ export function LiveDashboard() {
     }
   );
 
+  const { data: watched, mutate: mutateWatch } = useSWR<any[]>(
+    "/watchlist",
+    fetcher,
+    { shouldRetryOnError: false }
+  );
+  const watchedSet = new Set((watched || []).map((w) => w.symbol_id));
+
+  async function toggleWatch(
+    e: React.MouseEvent,
+    symbolId?: number | null
+  ) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!symbolId) return;
+    try {
+      if (watchedSet.has(symbolId))
+        await api(`/watchlist/${symbolId}`, { method: "DELETE" });
+      else await api(`/watchlist/${symbolId}`, { method: "POST" });
+      mutateWatch();
+    } catch {}
+  }
+
   if (error?.message?.includes("401")) {
     router.replace("/login");
     return null;
@@ -229,7 +252,8 @@ export function LiveDashboard() {
 
       {/* 랭킹 테이블 */}
       <div className="overflow-hidden rounded-2xl border border-bg-3 bg-bg-1">
-        <div className="grid grid-cols-[36px_1fr_110px_90px_100px] items-center gap-2 border-b border-bg-3 px-4 py-3 text-xs text-ink-3 sm:grid-cols-[36px_1fr_120px_90px_110px_110px]">
+        <div className="grid grid-cols-[28px_32px_1fr_110px_90px_100px] items-center gap-2 border-b border-bg-3 px-4 py-3 text-xs text-ink-3 sm:grid-cols-[28px_32px_1fr_120px_90px_110px_110px]">
+          <div />
           <div>순위</div>
           <div>종목</div>
           <div className="text-right">현재가</div>
@@ -255,8 +279,19 @@ export function LiveDashboard() {
             <Link
               key={`${row.market}-${row.code}`}
               href={`/symbols/${row.market}/${encodeURIComponent(row.code)}`}
-              className="grid grid-cols-[36px_1fr_110px_90px_100px] items-center gap-2 border-b border-bg-3 px-4 py-3 text-sm transition last:border-0 hover:bg-bg-2 sm:grid-cols-[36px_1fr_120px_90px_110px_110px]"
+              className="grid grid-cols-[28px_32px_1fr_110px_90px_100px] items-center gap-2 border-b border-bg-3 px-4 py-3 text-sm transition last:border-0 hover:bg-bg-2 sm:grid-cols-[28px_32px_1fr_120px_90px_110px_110px]"
             >
+              <span
+                role="button"
+                onClick={(e) => toggleWatch(e, row.symbol_id)}
+                className={`cursor-pointer text-center text-base leading-none ${
+                  row.symbol_id && watchedSet.has(row.symbol_id)
+                    ? "text-up"
+                    : "text-ink-4 hover:text-up"
+                }`}
+              >
+                {row.symbol_id && watchedSet.has(row.symbol_id) ? "♥" : "♡"}
+              </span>
               <div className="text-ink-3">{i + 1}</div>
               <div className="flex min-w-0 items-center gap-2.5">
                 <Logo row={row} />

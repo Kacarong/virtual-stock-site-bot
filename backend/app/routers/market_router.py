@@ -399,6 +399,7 @@ async def popular(
     market: str = Query(..., pattern="^(KRX|US|UPBIT)$"),
     sort: str = Query("value", pattern="^(value|volume|change|decline|market_cap)$"),
     limit: int = Query(30, ge=1, le=100),
+    db: Session = Depends(get_db),
 ) -> list[dict]:
     """시장별 인기종목.
 
@@ -406,7 +407,19 @@ async def popular(
     - sort:   value(거래대금) / volume(거래량) / change(급등) /
               decline(급락) / market_cap(시가총액)
     """
-    return await popular_svc(market, sort, limit)  # type: ignore
+    rows = await popular_svc(market, sort, limit)  # type: ignore
+    # 관심(하트) 토글용 symbol_id 보강
+    if rows:
+        codes = [r["code"] for r in rows]
+        id_map = {
+            (s.market, s.code): s.id
+            for s in db.query(Symbol.id, Symbol.market, Symbol.code)
+            .filter(Symbol.code.in_(codes))
+            .all()
+        }
+        for r in rows:
+            r["symbol_id"] = id_map.get((r["market"], r["code"]))
+    return rows
 
 
 @router.get("/industries")
