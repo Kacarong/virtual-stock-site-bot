@@ -285,7 +285,7 @@ export default function SymbolPage({
       </div>
 
       {/* 차트 · 호가 · 주문 3열 (Toss 스타일) */}
-      <div className="grid gap-4 xl:grid-cols-[1.7fr_1fr_1.1fr]">
+      <div className="grid gap-4 xl:grid-cols-[2.3fr_1fr_1fr]">
         {/* 차트 */}
         <div className="min-w-0 rounded-3xl bg-bg-1 p-4 shadow-sm">
           <div className="mb-3 flex flex-wrap gap-1">
