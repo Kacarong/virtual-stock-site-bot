@@ -374,6 +374,19 @@ async def indicators() -> list[dict]:
     return [r for r in results if r]
 
 
+@router.get("/orderbook/{market}/{code}")
+async def orderbook(market: str, code: str) -> dict:
+    """호가 (Toss). 미지원/실패 시 빈 호가."""
+    ob = await _toss.fetch_orderbook(code)
+    return ob or {"asks": [], "bids": [], "currency": None}
+
+
+@router.get("/trades/{market}/{code}")
+async def market_trades(market: str, code: str, count: int = 30) -> list[dict]:
+    """최근 체결 (Toss)."""
+    return await _toss.fetch_trades(code, count)
+
+
 @router.get("/history/{market}/{code}")
 async def history(market: str, code: str, interval: str = "1d") -> list[dict]:
     if interval not in ("1d", "1h", "5m", "1m", "1w", "1mo", "all"):

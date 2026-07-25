@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { Chart } from "@/components/Chart";
+import { OrderBook } from "@/components/OrderBook";
+import { RecentTrades } from "@/components/RecentTrades";
 import { FxModal } from "@/components/FxModal";
 import { api, fmtPrice, fmtQty, pctClass } from "@/lib/api";
 import { useUsdToKrw } from "@/lib/useUsdToKrw";
@@ -317,6 +319,12 @@ export default function SymbolPage({
             </div>
           )}
         </div>
+      </div>
+
+      {/* 호가 · 실시간 체결 (Toss) */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <OrderBook market={market} code={code} />
+        <RecentTrades market={market} code={code} />
       </div>
 
       {/* 주문 패널 */}

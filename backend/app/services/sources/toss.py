@@ -400,6 +400,50 @@ async def fetch_stock_info(codes: list[str]) -> dict[str, dict]:
     return out
 
 
+# --- 호가 / 체결 ----------------------------------------------------
+
+async def fetch_orderbook(code: str) -> dict | None:
+    """호가. GET /api/v1/orderbook?symbol=. 반환 {asks:[{price,volume}], bids:[...], currency}."""
+    if not _configured():
+        return None
+    res = await _authed_get("/api/v1/orderbook", {"symbol": code})
+    if not res:
+        return None
+
+    def _rows(key: str) -> list[dict]:
+        return [
+            {"price": _f(x.get("price")), "volume": _f(x.get("volume"))}
+            for x in (res.get(key) or [])
+        ]
+
+    return {
+        "asks": _rows("asks"),
+        "bids": _rows("bids"),
+        "currency": res.get("currency"),
+    }
+
+
+async def fetch_trades(code: str, count: int = 30) -> list[dict]:
+    """최근 체결. GET /api/v1/trades?symbol=&count=. [{price, volume, timestamp}]."""
+    if not _configured():
+        return []
+    res = await _authed_get(
+        "/api/v1/trades", {"symbol": code, "count": max(1, min(count, 100))}
+    )
+    if not res:
+        return []
+    out: list[dict] = []
+    for t in res:
+        out.append(
+            {
+                "price": _f(t.get("price")),
+                "volume": _f(t.get("volume")),
+                "timestamp": t.get("timestamp"),
+            }
+        )
+    return out
+
+
 # --- 환율 -----------------------------------------------------------
 
 async def fetch_usdkrw() -> Decimal | None:
