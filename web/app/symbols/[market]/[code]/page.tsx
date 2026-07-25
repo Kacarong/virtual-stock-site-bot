@@ -434,7 +434,9 @@ export default function SymbolPage({
               key={t}
               onClick={() => setOrderType(t)}
               className={`flex-1 rounded-lg py-2 text-sm ${
-                orderType === t ? "bg-ink-1 text-bg-1" : "bg-bg-2 text-ink-2"
+                orderType === t
+                  ? "bg-brand text-brand-fg"
+                  : "bg-bg-2 text-ink-2"
               }`}
             >
               {t === "MARKET" ? "시장가" : t === "LIMIT" ? "지정가" : "예약주문"}
@@ -443,7 +445,7 @@ export default function SymbolPage({
         </div>
 
         {orderType === "SCHEDULED" && (
-          <p className="mt-2 rounded bg-yellow-50 p-2 text-[11px] text-yellow-700">
+          <p className="mt-2 rounded-lg border border-brand/30 bg-brand/10 p-2 text-[11px] text-brand">
             시장 마감 중입니다. 개장 직후 자동 체결되도록 예약됩니다.
           </p>
         )}
