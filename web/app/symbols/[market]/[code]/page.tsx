@@ -282,8 +282,12 @@ export default function SymbolPage({
             {isWatched ? "★ 관심 등록됨" : "☆ 관심 추가"}
           </button>
         </div>
+      </div>
 
-        <div className="mt-6">
+      {/* 차트 · 호가 · 주문 3열 (Toss 스타일) */}
+      <div className="grid gap-4 xl:grid-cols-[1.7fr_1fr_1.1fr]">
+        {/* 차트 */}
+        <div className="min-w-0 rounded-3xl bg-bg-1 p-4 shadow-sm">
           <div className="mb-3 flex flex-wrap gap-1">
             {TFS.map((iv) => (
               <button
@@ -322,16 +326,12 @@ export default function SymbolPage({
             </div>
           )}
         </div>
-      </div>
 
-      {/* 호가 · 실시간 체결 (Toss) */}
-      <div className="grid gap-4 lg:grid-cols-2">
+        {/* 호가 */}
         <OrderBook market={market} code={code} />
-        <RecentTrades market={market} code={code} />
-      </div>
 
-      {/* 주문 패널 */}
-      <div className="rounded-3xl bg-bg-1 p-6 shadow-sm">
+        {/* 주문 */}
+        <div className="min-w-0 rounded-3xl bg-bg-1 p-6 shadow-sm">
         <div className="flex items-center justify-between">
           <h2 className="font-semibold">주문하기</h2>
           {!isOpen && nextOpen && (
@@ -485,12 +485,20 @@ export default function SymbolPage({
         </button>
 
         {msg && (
-          <p className="mt-3 rounded bg-green-50 p-3 text-xs text-green-700">{msg}</p>
+          <p className="mt-3 rounded bg-green-500/10 p-3 text-xs text-green-500">
+            {msg}
+          </p>
         )}
         {err && (
-          <p className="mt-3 rounded bg-red-50 p-3 text-xs text-red-700">{err}</p>
+          <p className="mt-3 rounded bg-red-500/10 p-3 text-xs text-red-500">
+            {err}
+          </p>
         )}
+        </div>
       </div>
+
+      {/* 실시간 체결 */}
+      <RecentTrades market={market} code={code} />
 
       {fxOpen && pf && rate && (
         <FxModal
