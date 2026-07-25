@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   createChart,
   ColorType,
@@ -29,19 +29,33 @@ type Props = {
 export function Chart({ data, priceScale = 1, unitLabel, integerOnly }: Props) {
   const ref = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
+  const [isDark, setIsDark] = useState(false);
+
+  // 다크모드 감지 (<html>.dark 클래스) — 토글 시 차트 색도 갱신
+  useEffect(() => {
+    const el = document.documentElement;
+    const update = () => setIsDark(el.classList.contains("dark"));
+    update();
+    const obs = new MutationObserver(update);
+    obs.observe(el, { attributes: true, attributeFilter: ["class"] });
+    return () => obs.disconnect();
+  }, []);
 
   useEffect(() => {
     if (!ref.current) return;
+    const bgColor = isDark ? "#16181D" : "#FFFFFF";
+    const textColor = isDark ? "#B0B8C1" : "#4E5968";
+    const gridColor = isDark ? "#23262D" : "#F2F4F6";
     const chart = createChart(ref.current, {
       autoSize: true,
       layout: {
-        background: { type: ColorType.Solid, color: "#FFFFFF" },
-        textColor: "#4E5968",
+        background: { type: ColorType.Solid, color: bgColor },
+        textColor: textColor,
         fontFamily: "Pretendard, ui-sans-serif, system-ui",
       },
       grid: {
-        horzLines: { color: "#F2F4F6" },
-        vertLines: { color: "#F2F4F6" },
+        horzLines: { color: gridColor },
+        vertLines: { color: gridColor },
       },
       rightPriceScale: {
         borderVisible: false,
@@ -126,7 +140,7 @@ export function Chart({ data, priceScale = 1, unitLabel, integerOnly }: Props) {
       chart.remove();
       chartRef.current = null;
     };
-  }, [data, priceScale, unitLabel, integerOnly]);
+  }, [data, priceScale, unitLabel, integerOnly, isDark]);
 
   return <div ref={ref} className="h-[420px] w-full" />;
 }
