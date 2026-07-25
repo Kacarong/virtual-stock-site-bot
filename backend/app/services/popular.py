@@ -92,6 +92,10 @@ def _immediate_fallback(market: str, sort: Sort, limit: int) -> list[dict] | Non
     # 1) 정확한 sort 캐시 (만료라도) — 이 sort에 맞춰 저장됐던 정확한 순서
     if (entry := _cache.get((market, sort))):
         return _sort_rows(list(entry[1]), sort)[:limit]
+    # 토스증권 기준(toss_*)은 시장 기준 캐시로 대체하지 않는다.
+    # (대체하면 시장 데이터가 토스 데이터로 오인됨 — 목록이 안 바뀌는 것처럼 보임)
+    if sort in ("toss_value", "toss_volume"):
+        return None
     # 2) 다른 sort 캐시 (만료 포함) — 같은 row 데이터, 단지 정렬키만 바꿔 재정렬
     #    원본 row에 정확한 volume/value/market_cap이 포함돼 있어 정확한 순서 보장
     for s in sort_keys:
@@ -382,7 +386,9 @@ async def _toss_popular_rows(country: str, sort: Sort, limit: int) -> list[dict]
     # ETF/ETN을 걸러낸 뒤에도 limit 이 차도록 여유분(headroom)을 더 받는다.
     raw = await _toss.fetch_rankings(country, sort, count=min(100, max(limit, 30) + 30))
     if not raw:
+        logger.info("toss ranking empty: country={} sort={}", country, sort)
         return []
+    logger.info("toss ranking ok: country={} sort={} n={}", country, sort, len(raw))
     codes = [r["code"] for r in raw]
 
     def _load_db() -> dict[str, tuple[str | None, str | None, str | None]]:
