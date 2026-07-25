@@ -314,7 +314,7 @@ export function LiveDashboard() {
           <div className="text-right">등락률</div>
           <div className="hidden text-right sm:block">거래대금</div>
           <div className="text-right">시가총액</div>
-          <div className="hidden text-center lg:block">매수·매도</div>
+          <div className="hidden text-center lg:block">거래 비율</div>
           <div className="hidden xl:block">산업</div>
         </div>
 
