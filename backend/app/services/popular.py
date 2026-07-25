@@ -425,7 +425,58 @@ async def _toss_popular_rows(country: str, sort: Sort, limit: int) -> list[dict]
                 "market_cap": market_cap,
             }
         )
+
+    # 이름 미해결(코드 그대로)인 것 — pykrx 목록에 없는 ETN/레버리지 등 —
+    # Toss 종목정보로 이름을 채우고 DB에 저장(다음부터 캐시 + 검색 노출).
+    unresolved = [row["code"] for row in out if row["name"] == row["code"]]
+    if unresolved:
+        try:
+            info = await _toss.fetch_stock_info(unresolved)
+        except Exception:
+            info = {}
+        if info:
+            for row in out:
+                fi = info.get(row["code"])
+                if fi and fi.get("name"):
+                    row["name"] = fi["name"]
+            await asyncio.to_thread(_persist_symbol_names, info)
     return out
+
+
+def _persist_symbol_names(info: dict[str, dict]) -> None:
+    """Toss 종목정보를 Symbol 마스터에 upsert (이름 없던 종목 보강)."""
+    db = SessionLocal()
+    try:
+        for code, fi in info.items():
+            name = fi.get("name")
+            market = fi.get("market") or "KRX"
+            if not name:
+                continue
+            sym = (
+                db.query(Symbol)
+                .filter(Symbol.market == market, Symbol.code == code)
+                .first()
+            )
+            if sym:
+                if sym.name != name:
+                    sym.name = name
+            else:
+                db.add(
+                    Symbol(
+                        code=code,
+                        name=name,
+                        market=market,
+                        asset_type=fi.get("asset_type") or "STOCK",
+                        currency=fi.get("currency") or "KRW",
+                        is_active=True,
+                    )
+                )
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.debug("persist symbol names failed: {}", e)
+    finally:
+        db.close()
 
 
 async def popular_krx(sort: Sort, limit: int = 30, *, _force_full: bool = False) -> list[dict]:
