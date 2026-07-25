@@ -377,38 +377,49 @@ async def _toss_popular_rows(country: str, sort: Sort, limit: int) -> list[dict]
     country='KR'|'US'. market_cap 정렬은 Toss 미지원(fetch_rankings가 [] 반환) → [].
     Toss 미설정/실패 시에도 [] → 호출측 기존 폴백 경로가 실행된다.
     """
-    raw = await _toss.fetch_rankings(country, sort, count=max(limit, 30))
+    # ETF/ETN을 걸러낸 뒤에도 limit 이 차도록 여유분(headroom)을 더 받는다.
+    raw = await _toss.fetch_rankings(country, sort, count=min(100, max(limit, 30) + 30))
     if not raw:
         return []
     codes = [r["code"] for r in raw]
 
-    def _load_names() -> dict[str, tuple[str | None, str | None]]:
+    def _load_db() -> dict[str, tuple[str | None, str | None, str | None]]:
         db = SessionLocal()
         try:
             return {
-                s.code: (s.name, s.market)
+                s.code: (s.name, s.market, s.asset_type)
                 for s in db.query(Symbol).filter(Symbol.code.in_(codes)).all()
             }
         finally:
             db.close()
 
-    db_info = await asyncio.to_thread(_load_names)
+    db_info = await asyncio.to_thread(_load_db)
+    # Toss 종목정보(이름·시장·유형) 배치 1콜 — 이름 보강 + ETF/ETN 판별용
+    try:
+        toss_info = await _toss.fetch_stock_info(codes)
+    except Exception:
+        toss_info = {}
     kr_seed_name = {code: name for code, name, _, _ in KR_SEEDS}
     us_seed = {code: (name, mkt) for code, name, mkt, _ in US_SEEDS}
 
     out: list[dict] = []
     for r in raw:
         code = str(r["code"])
-        db_name, db_market = db_info.get(code, (None, None))
+        db_name, db_market, db_type = db_info.get(code, (None, None, None))
+        ti = toss_info.get(code) or {}
+        # Toss "실시간차트"는 주식만 표기 → ETF/ETN 제외 (유형 모르면 통과=주식 취급)
+        asset_type = (ti.get("asset_type") or db_type or "STOCK").upper()
+        if asset_type in ("ETF", "ETN"):
+            continue
         if country == "KR":
-            name = db_name or kr_seed_name.get(code) or code
+            name = ti.get("name") or db_name or kr_seed_name.get(code) or code
             market = "KRX"
             cap = KRX_MARKET_CAP_FALLBACK.get(code)
             market_cap = float(cap) if cap else None
         else:
             seed_name, seed_market = us_seed.get(code, (None, None))
-            name = db_name or seed_name or code
-            market = db_market or seed_market or "NASDAQ"
+            name = ti.get("name") or db_name or seed_name or code
+            market = db_market or ti.get("market") or seed_market or "NASDAQ"
             market_cap = None
         price = _safe_float(r.get("price"))
         if price <= 0:
@@ -425,21 +436,12 @@ async def _toss_popular_rows(country: str, sort: Sort, limit: int) -> list[dict]
                 "market_cap": market_cap,
             }
         )
+        if len(out) >= limit:
+            break
 
-    # 이름 미해결(코드 그대로)인 것 — pykrx 목록에 없는 ETN/레버리지 등 —
-    # Toss 종목정보로 이름을 채우고 DB에 저장(다음부터 캐시 + 검색 노출).
-    unresolved = [row["code"] for row in out if row["name"] == row["code"]]
-    if unresolved:
-        try:
-            info = await _toss.fetch_stock_info(unresolved)
-        except Exception:
-            info = {}
-        if info:
-            for row in out:
-                fi = info.get(row["code"])
-                if fi and fi.get("name"):
-                    row["name"] = fi["name"]
-            await asyncio.to_thread(_persist_symbol_names, info)
+    # Toss 종목정보를 DB에 저장(이름/검색 노출, 다음부터 캐시).
+    if toss_info:
+        await asyncio.to_thread(_persist_symbol_names, toss_info)
     return out
 
 

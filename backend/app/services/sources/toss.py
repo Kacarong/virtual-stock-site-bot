@@ -83,37 +83,75 @@ async def _auth_headers() -> dict | None:
     return {"Authorization": f"Bearer {t}"}
 
 
+# --- 레이트리밋 보호 -------------------------------------------------
+# Toss Open API는 429(Too Many Requests)를 반환한다. 모든 GET을 이 헬퍼로
+# 통과시켜 동시성(semaphore)·최소 간격(spacing)·429 백오프 재시도를 강제한다.
+_REQ_SEM = asyncio.Semaphore(4)  # 동시 요청 상한
+_MIN_INTERVAL = 0.07  # 초 — 요청 사이 최소 간격
+_last_ts = 0.0
+_ts_lock = asyncio.Lock()
+
+
+async def _space() -> None:
+    global _last_ts
+    async with _ts_lock:
+        loop = asyncio.get_event_loop()
+        wait = _MIN_INTERVAL - (loop.time() - _last_ts)
+        if wait > 0:
+            await asyncio.sleep(wait)
+        _last_ts = loop.time()
+
+
+async def _authed_get(path: str, params: dict, *, retries: int = 2):
+    """인증 + 레이트리밋 + 429 백오프를 적용한 GET. 반환: _unwrap된 result 또는 None."""
+    headers = await _auth_headers()
+    if not headers:
+        return None
+    delay = 0.4
+    for attempt in range(retries + 1):
+        async with _REQ_SEM:
+            await _space()
+            try:
+                async with httpx.AsyncClient(timeout=10) as c:
+                    r = await c.get(f"{_base()}{path}", params=params, headers=headers)
+            except Exception as e:
+                logger.debug("Toss GET {} error: {}", path, e)
+                return None
+        if r.status_code == 429:
+            if attempt < retries:
+                await asyncio.sleep(delay)
+                delay *= 2
+                continue
+            logger.debug("Toss 429 giving up: {}", path)
+            return None
+        if r.status_code >= 400:
+            logger.debug("Toss GET {} status {}", path, r.status_code)
+            return None
+        try:
+            return _unwrap(r.json())
+        except Exception:
+            return None
+    return None
+
+
 # --- 현재가 ---------------------------------------------------------
 
 async def _fetch_last_prices(codes: list[str]) -> dict[str, Decimal]:
     """/api/v1/prices 배치 호출. {code: lastPrice}."""
     if not codes:
         return {}
-    headers = await _auth_headers()
-    if not headers:
-        return {}
     out: dict[str, Decimal] = {}
     for i in range(0, len(codes), 200):  # 최대 200개/콜
         chunk = codes[i : i + 200]
-        try:
-            async with httpx.AsyncClient(timeout=10) as c:
-                r = await c.get(
-                    f"{_base()}/api/v1/prices",
-                    params={"symbols": ",".join(chunk)},
-                    headers=headers,
-                )
-                r.raise_for_status()
-                rows = _unwrap(r.json()) or []
-            for row in rows:
-                sym = row.get("symbol")
-                lp = row.get("lastPrice")
-                if sym and lp is not None:
-                    try:
-                        out[sym] = Decimal(str(lp))
-                    except Exception:
-                        pass
-        except Exception as e:
-            logger.debug("Toss prices failed {}: {}", chunk[:3], e)
+        rows = await _authed_get("/api/v1/prices", {"symbols": ",".join(chunk)}) or []
+        for row in rows:
+            sym = row.get("symbol")
+            lp = row.get("lastPrice")
+            if sym and lp is not None:
+                try:
+                    out[sym] = Decimal(str(lp))
+                except Exception:
+                    pass
     return out
 
 
@@ -203,28 +241,12 @@ async def fetch_candles(code: str, interval: str = "1d", count: int = 100) -> li
     """
     if not _configured():
         return []
-    headers = await _auth_headers()
-    if not headers:
-        return []
     count = max(1, min(count, 200))
-    try:
-        async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get(
-                f"{_base()}/api/v1/candles",
-                params={
-                    "symbol": code,
-                    "interval": interval,
-                    "count": count,
-                    "adjusted": "true",
-                },
-                headers=headers,
-            )
-            r.raise_for_status()
-            res = _unwrap(r.json()) or {}
-        return _parse_candles(res)
-    except Exception as e:
-        logger.debug("Toss candles failed {} {}: {}", code, interval, e)
-        return []
+    res = await _authed_get(
+        "/api/v1/candles",
+        {"symbol": code, "interval": interval, "count": count, "adjusted": "true"},
+    )
+    return _parse_candles(res or {})
 
 
 # --- 시장 지표 (지수: 코스피/코스닥 등) -----------------------------
@@ -233,29 +255,18 @@ async def fetch_index_prices(symbols: list[str]) -> dict[str, Decimal]:
     """시장 지표 현재가. GET /api/v1/market-indicators/prices. {symbol: lastPrice}."""
     if not _configured() or not symbols:
         return {}
-    headers = await _auth_headers()
-    if not headers:
-        return {}
     out: dict[str, Decimal] = {}
-    try:
-        async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get(
-                f"{_base()}/api/v1/market-indicators/prices",
-                params={"symbols": ",".join(symbols)},
-                headers=headers,
-            )
-            r.raise_for_status()
-            rows = _unwrap(r.json()) or []
-        for row in rows:
-            s = row.get("symbol")
-            lp = row.get("lastPrice")
-            if s and lp is not None:
-                try:
-                    out[s] = Decimal(str(lp))
-                except Exception:
-                    pass
-    except Exception as e:
-        logger.debug("Toss index prices failed: {}", e)
+    rows = await _authed_get(
+        "/api/v1/market-indicators/prices", {"symbols": ",".join(symbols)}
+    ) or []
+    for row in rows:
+        s = row.get("symbol")
+        lp = row.get("lastPrice")
+        if s and lp is not None:
+            try:
+                out[s] = Decimal(str(lp))
+            except Exception:
+                pass
     return out
 
 
@@ -265,23 +276,12 @@ async def fetch_index_candles(
     """시장 지표 캔들. GET /api/v1/market-indicators/{symbol}/candles."""
     if not _configured():
         return []
-    headers = await _auth_headers()
-    if not headers:
-        return []
     count = max(1, min(count, 200))
-    try:
-        async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get(
-                f"{_base()}/api/v1/market-indicators/{symbol}/candles",
-                params={"interval": interval, "count": count},
-                headers=headers,
-            )
-            r.raise_for_status()
-            res = _unwrap(r.json()) or {}
-        return _parse_candles(res)
-    except Exception as e:
-        logger.debug("Toss index candles failed {}: {}", symbol, e)
-        return []
+    res = await _authed_get(
+        f"/api/v1/market-indicators/{symbol}/candles",
+        {"interval": interval, "count": count},
+    )
+    return _parse_candles(res or {})
 
 
 # --- 랭킹 (인기종목) ------------------------------------------------
@@ -315,47 +315,38 @@ async def fetch_rankings(
     tp = _RANKING_TYPE.get(sort)
     if not tp:
         return []
-    headers = await _auth_headers()
-    if not headers:
-        return []
     count = max(1, min(count, 100))
-    try:
-        async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get(
-                f"{_base()}/api/v1/rankings",
-                params={
-                    "type": tp,
-                    "marketCountry": market_country,
-                    "duration": "1d",
-                    "count": count,
-                },
-                headers=headers,
-            )
-            r.raise_for_status()
-            res = _unwrap(r.json()) or {}
-        rows = res.get("rankings", []) if isinstance(res, dict) else []
-        out: list[dict] = []
-        for row in rows:
-            code = row.get("symbol")
-            price = row.get("price") or {}
-            if not code or price.get("lastPrice") is None:
-                continue
-            cr = price.get("changeRate")
-            change_pct = _f(cr) * 100 if cr not in (None, "") else 0.0
-            out.append(
-                {
-                    "code": code,
-                    "price": _f(price.get("lastPrice")),
-                    "prev_close": _f(price.get("basePrice")),
-                    "change_pct": change_pct,
-                    "volume": _f(row.get("tradingVolume")),
-                    "value": _f(row.get("tradingAmount")),
-                }
-            )
-        return out
-    except Exception as e:
-        logger.debug("Toss rankings failed {} {}: {}", market_country, sort, e)
+    res = await _authed_get(
+        "/api/v1/rankings",
+        {
+            "type": tp,
+            "marketCountry": market_country,
+            "duration": "1d",
+            "count": count,
+        },
+    )
+    if res is None:
         return []
+    rows = res.get("rankings", []) if isinstance(res, dict) else []
+    out: list[dict] = []
+    for row in rows:
+        code = row.get("symbol")
+        price = row.get("price") or {}
+        if not code or price.get("lastPrice") is None:
+            continue
+        cr = price.get("changeRate")
+        change_pct = _f(cr) * 100 if cr not in (None, "") else 0.0
+        out.append(
+            {
+                "code": code,
+                "price": _f(price.get("lastPrice")),
+                "prev_close": _f(price.get("basePrice")),
+                "change_pct": change_pct,
+                "volume": _f(row.get("tradingVolume")),
+                "value": _f(row.get("tradingAmount")),
+            }
+        )
+    return out
 
 
 # --- 종목 정보 (이름/시장 조회) -------------------------------------
@@ -389,36 +380,23 @@ async def fetch_stock_info(codes: list[str]) -> dict[str, dict]:
     """
     if not _configured() or not codes:
         return {}
-    headers = await _auth_headers()
-    if not headers:
-        return {}
     out: dict[str, dict] = {}
     for i in range(0, len(codes), 200):
         chunk = codes[i : i + 200]
-        try:
-            async with httpx.AsyncClient(timeout=10) as c:
-                r = await c.get(
-                    f"{_base()}/api/v1/stocks",
-                    params={"symbols": ",".join(chunk)},
-                    headers=headers,
-                )
-                r.raise_for_status()
-                rows = _unwrap(r.json()) or []
-            for row in rows:
-                code = row.get("symbol")
-                name = row.get("name") or row.get("englishName")
-                if not code or not name:
-                    continue
-                out[code] = {
-                    "name": name,
-                    "english_name": row.get("englishName"),
-                    "market": _MARKET_MAP.get(row.get("market") or "", "KRX"),
-                    "currency": row.get("currency") or "KRW",
-                    "asset_type": _asset_type(row.get("securityType")),
-                    "status": row.get("status"),
-                }
-        except Exception as e:
-            logger.debug("Toss stocks failed {}: {}", chunk[:3], e)
+        rows = await _authed_get("/api/v1/stocks", {"symbols": ",".join(chunk)}) or []
+        for row in rows:
+            code = row.get("symbol")
+            name = row.get("name") or row.get("englishName")
+            if not code or not name:
+                continue
+            out[code] = {
+                "name": name,
+                "english_name": row.get("englishName"),
+                "market": _MARKET_MAP.get(row.get("market") or "", "KRX"),
+                "currency": row.get("currency") or "KRW",
+                "asset_type": _asset_type(row.get("securityType")),
+                "status": row.get("status"),
+            }
     return out
 
 
@@ -428,20 +406,11 @@ async def fetch_usdkrw() -> Decimal | None:
     """USD→KRW 환율."""
     if not _configured():
         return None
-    headers = await _auth_headers()
-    if not headers:
+    res = await _authed_get(
+        "/api/v1/exchange-rate",
+        {"baseCurrency": "USD", "quoteCurrency": "KRW"},
+    )
+    if not res:
         return None
-    try:
-        async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get(
-                f"{_base()}/api/v1/exchange-rate",
-                params={"baseCurrency": "USD", "quoteCurrency": "KRW"},
-                headers=headers,
-            )
-            r.raise_for_status()
-            res = _unwrap(r.json()) or {}
-        rate = res.get("rate") or res.get("midRate")
-        return Decimal(str(rate)) if rate else None
-    except Exception as e:
-        logger.debug("Toss exchange-rate failed: {}", e)
-        return None
+    rate = res.get("rate") or res.get("midRate")
+    return Decimal(str(rate)) if rate else None
