@@ -6,7 +6,7 @@ import { useState } from "react";
 import useSWR from "swr";
 import { FxModal } from "@/components/FxModal";
 import { MarketStatusBar } from "@/components/MarketStatusBar";
-import { PopularBoard } from "@/components/PopularBoard";
+import { LiveDashboard } from "@/components/LiveDashboard";
 import { SearchBox } from "@/components/SearchBox";
 import { api, fmtKRW, fmtNum, fmtPrice, fmtQty, fmtUSD, pctClass } from "@/lib/api";
 
@@ -207,8 +207,8 @@ export default function Home() {
         />
       )}
 
-      {/* 실시간 인기 */}
-      <PopularBoard />
+      {/* 실시간 차트 (Toss 스타일 랭킹) */}
+      <LiveDashboard />
 
       {/* 보유 종목 (시장별 그룹) */}
       <div className="rounded-3xl bg-bg-1 shadow-sm">
