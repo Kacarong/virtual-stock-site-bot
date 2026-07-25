@@ -107,7 +107,7 @@ export function FxModal({ cashKrw, cashUsd, rate, onClose, onDone }: Props) {
               setAmount("");
             }}
             className={`rounded-xl py-3 text-sm font-semibold ${
-              dir === "KRW_TO_USD" ? "bg-ink-1 text-white" : "bg-bg-2 text-ink-2"
+              dir === "KRW_TO_USD" ? "bg-ink-1 text-bg-1" : "bg-bg-2 text-ink-2"
             }`}
           >
             원 → 달러
@@ -118,7 +118,7 @@ export function FxModal({ cashKrw, cashUsd, rate, onClose, onDone }: Props) {
               setAmount("");
             }}
             className={`rounded-xl py-3 text-sm font-semibold ${
-              dir === "USD_TO_KRW" ? "bg-ink-1 text-white" : "bg-bg-2 text-ink-2"
+              dir === "USD_TO_KRW" ? "bg-ink-1 text-bg-1" : "bg-bg-2 text-ink-2"
             }`}
           >
             달러 → 원

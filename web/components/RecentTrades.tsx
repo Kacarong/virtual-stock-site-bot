@@ -47,9 +47,9 @@ export function RecentTrades({
       {trades.length === 0 ? (
         <p className="py-8 text-center text-xs text-ink-3">체결 내역 없음</p>
       ) : (
-        <div className="max-h-72 overflow-y-auto">
+        <div className="thin-scroll max-h-72 overflow-y-auto pr-2">
           <table className="w-full text-sm">
-            <thead className="text-xs text-ink-3">
+            <thead className="sticky top-0 bg-bg-1 text-xs text-ink-3">
               <tr>
                 <th className="py-1 text-left font-normal">시각</th>
                 <th className="py-1 text-right font-normal">체결가</th>

@@ -99,7 +99,7 @@ function PopularPanel({
               onClick={() => setSort(s.key)}
               className={`rounded-full px-2 py-1 text-[11px] whitespace-nowrap ${
                 sort === s.key
-                  ? "bg-ink-1 text-white"
+                  ? "bg-ink-1 text-bg-1"
                   : "bg-bg-2 text-ink-3 hover:bg-bg-3"
               }`}
             >
@@ -114,7 +114,7 @@ function PopularPanel({
           <button
             onClick={() => setShowKrw(false)}
             className={`rounded-full px-2.5 py-0.5 text-[11px] ${
-              !showKrw ? "bg-ink-1 text-white" : "bg-bg-2 text-ink-3"
+              !showKrw ? "bg-ink-1 text-bg-1" : "bg-bg-2 text-ink-3"
             }`}
           >
             달러로 보기
@@ -122,7 +122,7 @@ function PopularPanel({
           <button
             onClick={() => setShowKrw(true)}
             className={`rounded-full px-2.5 py-0.5 text-[11px] ${
-              showKrw ? "bg-ink-1 text-white" : "bg-bg-2 text-ink-3"
+              showKrw ? "bg-ink-1 text-bg-1" : "bg-bg-2 text-ink-3"
             }`}
           >
             원화로 보기

@@ -107,7 +107,10 @@ export default function SymbolPage({
   const holdingQty = myHolding ? Number(myHolding.qty) : 0;
 
   useEffect(() => {
-    if (q?.price && !limitPrice) setLimitPrice(q.price);
+    if (q?.price && !limitPrice) {
+      const n = Number(q.price);
+      setLimitPrice(isFinite(n) ? String(n) : q.price);
+    }
   }, [q?.price]);
 
   // 시장 닫혀있으면 자동으로 예약주문 모드
@@ -219,7 +222,7 @@ export default function SymbolPage({
                     <button
                       onClick={() => setShowKrw(false)}
                       className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                        !showKrw ? "bg-ink-1 text-white" : "bg-bg-2 text-ink-3"
+                        !showKrw ? "bg-ink-1 text-bg-1" : "bg-bg-2 text-ink-3"
                       }`}
                     >
                       $
@@ -227,7 +230,7 @@ export default function SymbolPage({
                     <button
                       onClick={() => setShowKrw(true)}
                       className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
-                        showKrw ? "bg-ink-1 text-white" : "bg-bg-2 text-ink-3"
+                        showKrw ? "bg-ink-1 text-bg-1" : "bg-bg-2 text-ink-3"
                       }`}
                     >
                       ₩
@@ -288,7 +291,7 @@ export default function SymbolPage({
                 onClick={() => setTf(iv.key)}
                 className={`rounded-full px-3 py-1 text-xs ${
                   tf === iv.key
-                    ? "bg-ink-1 text-white"
+                    ? "bg-ink-1 text-bg-1"
                     : "bg-bg-2 text-ink-3 hover:bg-bg-3"
                 }`}
               >
@@ -431,7 +434,7 @@ export default function SymbolPage({
               key={t}
               onClick={() => setOrderType(t)}
               className={`flex-1 rounded-lg py-2 text-sm ${
-                orderType === t ? "bg-ink-1 text-white" : "bg-bg-2 text-ink-2"
+                orderType === t ? "bg-ink-1 text-bg-1" : "bg-bg-2 text-ink-2"
               }`}
             >
               {t === "MARKET" ? "시장가" : t === "LIMIT" ? "지정가" : "예약주문"}

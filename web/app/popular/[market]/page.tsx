@@ -93,7 +93,7 @@ export default function PopularDetailPage({
               onClick={() => setSort(s.key)}
               className={`rounded-full px-3 py-1.5 text-xs ${
                 sort === s.key
-                  ? "bg-ink-1 text-white"
+                  ? "bg-ink-1 text-bg-1"
                   : "bg-bg-2 text-ink-3 hover:bg-bg-3"
               }`}
             >
@@ -108,7 +108,7 @@ export default function PopularDetailPage({
           <button
             onClick={() => setShowKrw(false)}
             className={`rounded-full px-3 py-1 text-[11px] ${
-              !showKrw ? "bg-ink-1 text-white" : "bg-bg-2 text-ink-3"
+              !showKrw ? "bg-ink-1 text-bg-1" : "bg-bg-2 text-ink-3"
             }`}
           >
             달러로 보기
@@ -116,7 +116,7 @@ export default function PopularDetailPage({
           <button
             onClick={() => setShowKrw(true)}
             className={`rounded-full px-3 py-1 text-[11px] ${
-              showKrw ? "bg-ink-1 text-white" : "bg-bg-2 text-ink-3"
+              showKrw ? "bg-ink-1 text-bg-1" : "bg-bg-2 text-ink-3"
             }`}
           >
             원화로 보기
