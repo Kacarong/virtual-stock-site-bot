@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import useSWR from "swr";
 import { api } from "@/lib/api";
+import { useUsdToKrw } from "@/lib/useUsdToKrw";
 
 type Row = {
   market: string;
@@ -74,11 +75,19 @@ function fmtCompact(n?: number | null): string {
   return Math.round(v).toLocaleString();
 }
 
-function fmtPriceCell(row: Row): string {
+function fmtPriceCell(
+  row: Row,
+  showKrw: boolean,
+  rate: number | null
+): string {
   const v = row.price;
   if (v == null) return "-";
   const n = Number(v);
   if (!isFinite(n)) return "-";
+  const isUS =
+    row.market === "NASDAQ" || row.market === "NYSE" || row.market === "AMEX";
+  if (isUS && showKrw && rate)
+    return Math.round(n * rate).toLocaleString() + "원";
   if (row.market === "KRX" || row.market === "UPBIT")
     return Math.round(n).toLocaleString() + "원";
   return "$" + n.toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -175,6 +184,14 @@ export function LiveDashboard() {
   const router = useRouter();
   const [market, setMarket] = useState<MarketKey>("KRX");
   const [sort, setSort] = useState<Sort>("toss_value");
+  // 해외주식 원화/달러 표시 토글 (기본 원화, 페이지 간 공유)
+  const [showKrw, setShowKrw] = useUsdToKrw();
+  const { data: fx } = useSWR<{ usdkrw: string }>(
+    market === "US" ? "/portfolio" : null,
+    fetcher,
+    { shouldRetryOnError: false }
+  );
+  const rate = fx?.usdkrw ? Number(fx.usdkrw) : null;
 
   const sortsForMarket = SORTS.filter(
     (s) => !(market === "UPBIT" && NON_UPBIT_SORTS.includes(s.key))
@@ -248,8 +265,9 @@ export function LiveDashboard() {
         ))}
       </div>
 
-      {/* 정렬 칩 */}
-      <div className="mb-4 flex flex-wrap gap-2">
+      {/* 정렬 칩 + (해외) 원화/달러 토글 */}
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap gap-2">
         {sortsForMarket.map((s) => (
           <button
             key={s.key}
@@ -263,6 +281,27 @@ export function LiveDashboard() {
             {s.label}
           </button>
         ))}
+        </div>
+        {market === "US" && (
+          <div className="flex gap-1">
+            <button
+              onClick={() => setShowKrw(true)}
+              className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+                showKrw ? "bg-ink-1 text-bg-1" : "bg-bg-1 text-ink-3"
+              }`}
+            >
+              원화
+            </button>
+            <button
+              onClick={() => setShowKrw(false)}
+              className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+                !showKrw ? "bg-ink-1 text-bg-1" : "bg-bg-1 text-ink-3"
+              }`}
+            >
+              달러
+            </button>
+          </div>
+        )}
       </div>
 
       {/* 랭킹 테이블 */}
@@ -320,7 +359,7 @@ export function LiveDashboard() {
                 </div>
               </div>
               <div className="text-right font-medium text-ink-1">
-                {fmtPriceCell(row)}
+                {fmtPriceCell(row, showKrw, rate)}
               </div>
               <div className={`text-right font-medium ${p.c}`}>{p.t}</div>
               <div className="hidden text-right text-ink-3 sm:block">
