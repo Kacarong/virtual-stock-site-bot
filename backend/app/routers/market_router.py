@@ -15,6 +15,7 @@ from ..auth import admin_required, current_user
 from ..db import get_db
 from ..models import Price, Symbol, User
 from ..services.industries import industries as industries_svc
+from ..services.industries import industry_label
 from ..services.market_calendar import is_market_open, next_open
 from ..services.history import get_history
 from ..services.popular import popular as popular_svc
@@ -397,7 +398,10 @@ async def history(market: str, code: str, interval: str = "1d") -> list[dict]:
 @router.get("/popular")
 async def popular(
     market: str = Query(..., pattern="^(KRX|US|UPBIT)$"),
-    sort: str = Query("value", pattern="^(value|volume|change|decline|market_cap)$"),
+    sort: str = Query(
+        "value",
+        pattern="^(value|volume|change|decline|market_cap|toss_value|toss_volume)$",
+    ),
     limit: int = Query(30, ge=1, le=100),
     db: Session = Depends(get_db),
 ) -> list[dict]:
@@ -419,6 +423,7 @@ async def popular(
         }
         for r in rows:
             r["symbol_id"] = id_map.get((r["market"], r["code"]))
+            r["industry"] = industry_label(r["market"], r["code"], r.get("name"))
     return rows
 
 

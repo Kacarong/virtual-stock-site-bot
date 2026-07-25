@@ -273,6 +273,31 @@ def _name_lookup() -> dict[tuple[str, str], str]:
     return out
 
 
+# 라벨 조회용 맵 (한 번만 구성)
+_CODE_TO_LABEL: dict[tuple[str, str], str] | None = None
+_KEY_TO_LABEL: dict[str, str] | None = None
+
+
+def industry_label(market: str, code: str, name: str | None = None) -> str | None:
+    """(market, code)/이름으로 산업 라벨 조회. 종류별 종목의 큐레이션 분류 기준."""
+    global _CODE_TO_LABEL, _KEY_TO_LABEL
+    if _CODE_TO_LABEL is None:
+        _CODE_TO_LABEL = {}
+        _KEY_TO_LABEL = {}
+        for key, label, items in INDUSTRY_GROUPS:
+            _KEY_TO_LABEL[key] = label
+            for mk, cd in items:
+                _CODE_TO_LABEL.setdefault((mk, cd), label)
+    lbl = _CODE_TO_LABEL.get((market, code))
+    if lbl:
+        return lbl
+    if name:
+        keys = _classify_by_name(name, market)
+        if keys:
+            return _KEY_TO_LABEL.get(keys[0])
+    return None
+
+
 def _classify_by_name(name: str, market: str) -> list[str]:
     """이름으로부터 매칭되는 카테고리 키 리스트."""
     if not name:

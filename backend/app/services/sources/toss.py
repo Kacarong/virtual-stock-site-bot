@@ -292,6 +292,8 @@ _RANKING_TYPE = {
     "volume": "MARKET_TRADING_VOLUME",
     "change": "TOP_GAINERS",
     "decline": "TOP_LOSERS",
+    "toss_value": "TOSS_SECURITIES_TRADING_AMOUNT",
+    "toss_volume": "TOSS_SECURITIES_TRADING_VOLUME",
 }
 
 

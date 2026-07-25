@@ -29,7 +29,9 @@ from .sources import upbit
 from .sources.kr_seeds import KR_SEEDS
 from .sources.us_seeds import US_SEEDS
 
-Sort = Literal["value", "volume", "change", "decline", "market_cap"]
+Sort = Literal[
+    "value", "volume", "change", "decline", "market_cap", "toss_value", "toss_volume"
+]
 Market = Literal["KRX", "US", "UPBIT"]
 
 _cache: dict[tuple[str, str], tuple[float, list[dict]]] = {}
@@ -803,9 +805,10 @@ async def popular_krx(sort: Sort, limit: int = 30, *, _force_full: bool = False)
 
 def _sort_rows(rows: list[dict], sort: Sort) -> list[dict]:
     # secondary key=code 로 안정 정렬 (값 동률 시 같은 순서 유지 → 화면 튐 방지)
-    if sort == "value":
+    # 토스 기준은 정렬 로직상 거래대금/거래량과 동일(값 필드가 이미 토스 기준).
+    if sort in ("value", "toss_value"):
         rows.sort(key=lambda x: (-(x.get("value") or 0), x.get("code", "")))
-    elif sort == "volume":
+    elif sort in ("volume", "toss_volume"):
         rows.sort(key=lambda x: (-(x.get("volume") or 0), x.get("code", "")))
     elif sort == "change":
         rows.sort(key=lambda x: (-(x.get("change_pct") or 0), x.get("code", "")))

@@ -16,6 +16,7 @@ type Row = {
   value: number | null;
   market_cap?: number | null;
   symbol_id?: number | null;
+  industry?: string | null;
 };
 
 type Indicator = {
@@ -28,7 +29,17 @@ type Indicator = {
 };
 
 type MarketKey = "KRX" | "US" | "UPBIT";
-type Sort = "value" | "volume" | "change" | "decline" | "market_cap";
+type Sort =
+  | "value"
+  | "volume"
+  | "change"
+  | "decline"
+  | "market_cap"
+  | "toss_value"
+  | "toss_volume";
+
+// 코인(UPBIT)에는 없는 정렬 (Toss 미지원 / 시총 미지원)
+const NON_UPBIT_SORTS = ["market_cap", "toss_value", "toss_volume"];
 
 const fetcher = (u: string) => api(u);
 
@@ -39,6 +50,8 @@ const MARKETS: { key: MarketKey; label: string }[] = [
 ];
 
 const SORTS: { key: Sort; label: string }[] = [
+  { key: "toss_value", label: "토스 거래대금" },
+  { key: "toss_volume", label: "토스 거래량" },
   { key: "value", label: "거래대금" },
   { key: "volume", label: "거래량" },
   { key: "change", label: "급상승" },
@@ -160,10 +173,10 @@ function IndicatorBar() {
 export function LiveDashboard() {
   const router = useRouter();
   const [market, setMarket] = useState<MarketKey>("KRX");
-  const [sort, setSort] = useState<Sort>("value");
+  const [sort, setSort] = useState<Sort>("toss_value");
 
   const sortsForMarket = SORTS.filter(
-    (s) => !(market === "UPBIT" && s.key === "market_cap")
+    (s) => !(market === "UPBIT" && NON_UPBIT_SORTS.includes(s.key))
   );
 
   const { data, error, isLoading } = useSWR<Row[]>(
@@ -220,7 +233,8 @@ export function LiveDashboard() {
             key={m.key}
             onClick={() => {
               setMarket(m.key);
-              if (m.key === "UPBIT" && sort === "market_cap") setSort("value");
+              if (m.key === "UPBIT" && NON_UPBIT_SORTS.includes(sort))
+                setSort("value");
             }}
             className={`rounded-full px-4 py-1.5 text-sm font-semibold transition ${
               market === m.key
@@ -252,7 +266,7 @@ export function LiveDashboard() {
 
       {/* 랭킹 테이블 */}
       <div className="overflow-hidden rounded-2xl border border-bg-3 bg-bg-1">
-        <div className="grid grid-cols-[28px_32px_1fr_110px_90px_100px] items-center gap-2 border-b border-bg-3 px-4 py-3 text-xs text-ink-3 sm:grid-cols-[28px_32px_1fr_120px_90px_110px_110px]">
+        <div className="grid grid-cols-[28px_32px_1fr_110px_90px_100px] items-center gap-2 border-b border-bg-3 px-4 py-3 text-xs text-ink-3 sm:grid-cols-[28px_32px_1fr_120px_90px_110px_110px] lg:grid-cols-[28px_32px_1fr_120px_90px_110px_110px_130px]">
           <div />
           <div>순위</div>
           <div>종목</div>
@@ -260,6 +274,7 @@ export function LiveDashboard() {
           <div className="text-right">등락률</div>
           <div className="hidden text-right sm:block">거래대금</div>
           <div className="text-right">시가총액</div>
+          <div className="hidden lg:block">산업</div>
         </div>
 
         {isLoading && rows.length === 0 && (
@@ -279,7 +294,7 @@ export function LiveDashboard() {
             <Link
               key={`${row.market}-${row.code}`}
               href={`/symbols/${row.market}/${encodeURIComponent(row.code)}`}
-              className="grid grid-cols-[28px_32px_1fr_110px_90px_100px] items-center gap-2 border-b border-bg-3 px-4 py-3 text-sm transition last:border-0 hover:bg-bg-2 sm:grid-cols-[28px_32px_1fr_120px_90px_110px_110px]"
+              className="grid grid-cols-[28px_32px_1fr_110px_90px_100px] items-center gap-2 border-b border-bg-3 px-4 py-3 text-sm transition last:border-0 hover:bg-bg-2 sm:grid-cols-[28px_32px_1fr_120px_90px_110px_110px] lg:grid-cols-[28px_32px_1fr_120px_90px_110px_110px_130px]"
             >
               <span
                 role="button"
@@ -311,6 +326,13 @@ export function LiveDashboard() {
               </div>
               <div className="text-right text-ink-3">
                 {fmtCompact(row.market_cap)}
+              </div>
+              <div className="hidden lg:block">
+                {row.industry ? (
+                  <span className="inline-block truncate rounded bg-bg-3 px-2 py-0.5 text-[11px] text-ink-2">
+                    {row.industry}
+                  </span>
+                ) : null}
               </div>
             </Link>
           );
