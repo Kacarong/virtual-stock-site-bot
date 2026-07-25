@@ -298,6 +298,70 @@ async def fetch_rankings(
         return []
 
 
+# --- 종목 정보 (이름/시장 조회) -------------------------------------
+
+# Toss market 세그먼트 → 앱 market
+_MARKET_MAP = {
+    "KOSPI": "KRX",
+    "KOSDAQ": "KRX",
+    "KR_ETC": "KRX",
+    "NYSE": "NYSE",
+    "NASDAQ": "NASDAQ",
+    "AMEX": "AMEX",
+    "US_ETC": "NASDAQ",
+}
+
+
+def _asset_type(security_type: str | None) -> str:
+    s = (security_type or "").upper()
+    if "ETF" in s:
+        return "ETF"
+    if s == "ETN":
+        return "ETN"
+    return "STOCK"
+
+
+async def fetch_stock_info(codes: list[str]) -> dict[str, dict]:
+    """종목 기본정보(이름/시장/통화). GET /api/v1/stocks?symbols= (최대 200).
+
+    반환: {code: {name, english_name, market, currency, asset_type, status}}.
+    pykrx 전종목 목록에 없는 ETN/레버리지 등의 이름을 on-demand로 해결하는 용도.
+    """
+    if not _configured() or not codes:
+        return {}
+    headers = await _auth_headers()
+    if not headers:
+        return {}
+    out: dict[str, dict] = {}
+    for i in range(0, len(codes), 200):
+        chunk = codes[i : i + 200]
+        try:
+            async with httpx.AsyncClient(timeout=10) as c:
+                r = await c.get(
+                    f"{_base()}/api/v1/stocks",
+                    params={"symbols": ",".join(chunk)},
+                    headers=headers,
+                )
+                r.raise_for_status()
+                rows = _unwrap(r.json()) or []
+            for row in rows:
+                code = row.get("symbol")
+                name = row.get("name") or row.get("englishName")
+                if not code or not name:
+                    continue
+                out[code] = {
+                    "name": name,
+                    "english_name": row.get("englishName"),
+                    "market": _MARKET_MAP.get(row.get("market") or "", "KRX"),
+                    "currency": row.get("currency") or "KRW",
+                    "asset_type": _asset_type(row.get("securityType")),
+                    "status": row.get("status"),
+                }
+        except Exception as e:
+            logger.debug("Toss stocks failed {}: {}", chunk[:3], e)
+    return out
+
+
 # --- 환율 -----------------------------------------------------------
 
 async def fetch_usdkrw() -> Decimal | None:

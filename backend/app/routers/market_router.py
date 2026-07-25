@@ -19,6 +19,7 @@ from ..services.market_calendar import is_market_open, next_open
 from ..services.history import get_history
 from ..services.popular import popular as popular_svc
 from ..services.quotes import get_quote
+from ..services.sources import toss as _toss
 from ..services.symbol_sync import sync_all
 
 router = APIRouter(prefix="/market", tags=["market"])
@@ -218,6 +219,35 @@ async def quote(market: str, code: str, db: Session = Depends(get_db)) -> dict:
         except Exception:
             db.rollback()
     display_name = (sym.name if sym else None) or seed_name or code
+
+    # 이름 미해결(코드 그대로) → Toss 종목정보로 해결 + DB에 반영.
+    # pykrx 전종목 목록에 없는 ETN/레버리지 등이 코드로만 뜨는 것을 보완.
+    if display_name == code:
+        try:
+            info = (await _toss.fetch_stock_info([code])).get(code)
+        except Exception:
+            info = None
+        if info and info.get("name"):
+            display_name = info["name"]
+            if sym:
+                sym.name = display_name
+            else:
+                sym = Symbol(
+                    code=code,
+                    name=display_name,
+                    market=mkt,
+                    asset_type=info.get("asset_type", "STOCK"),
+                    currency=info.get("currency")
+                    or ("USD" if mkt in ("NASDAQ", "NYSE", "AMEX") else "KRW"),
+                    is_active=True,
+                )
+                db.add(sym)
+            try:
+                db.commit()
+                db.refresh(sym)
+                db_price = db.get(Price, sym.id) if sym else db_price
+            except Exception:
+                db.rollback()
 
     # DB Price가 신선하면 즉시 반환 (UPBIT는 30s, 그 외는 60s)
     fresh_window = timedelta(seconds=30 if mkt == "UPBIT" else 60)
