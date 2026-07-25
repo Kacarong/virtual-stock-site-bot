@@ -319,6 +319,61 @@ def status() -> dict:
     return out
 
 
+@router.get("/indicators")
+async def indicators() -> list[dict]:
+    """상단 지표바용: 나스닥(yfinance) + 코스피(Toss). 실패 항목은 생략."""
+    import asyncio as _asyncio
+
+    from ..services.history import _yf_history
+    from ..services.sources import yfinance_src as _yf
+
+    async def _nasdaq() -> dict | None:
+        try:
+            q = await _yf.fetch_quote("^IXIC")
+            if not q:
+                return None
+            price = float(q["price"])
+            prev = float(q.get("prev_close") or price)
+            hist = await _yf_history("NASDAQ", "^IXIC", "1mo", "1d")
+            spark = [float(r["close"]) for r in hist][-30:]
+            return {
+                "key": "NASDAQ",
+                "label": "나스닥",
+                "price": price,
+                "change_pct": ((price - prev) / prev * 100) if prev else 0.0,
+                "spark": spark,
+                "currency": "USD",
+            }
+        except Exception:
+            return None
+
+    async def _kospi() -> dict | None:
+        try:
+            candles = await _toss.fetch_index_candles("KOSPI", "1d", 30)
+            prices = await _toss.fetch_index_prices(["KOSPI"])
+            if prices.get("KOSPI"):
+                last = float(prices["KOSPI"])
+            elif candles:
+                last = float(candles[-1]["close"])
+            else:
+                return None
+            prev = float(candles[-2]["close"]) if len(candles) >= 2 else last
+            spark = [float(r["close"]) for r in candles][-30:]
+            return {
+                "key": "KOSPI",
+                "label": "코스피",
+                "price": last,
+                "change_pct": ((last - prev) / prev * 100) if prev else 0.0,
+                "spark": spark,
+                "currency": "KRW",
+            }
+        except Exception:
+            return None
+
+    results = await _asyncio.gather(_nasdaq(), _kospi())
+    return [r for r in results if r]
+
+
 @router.get("/history/{market}/{code}")
 async def history(market: str, code: str, interval: str = "1d") -> list[dict]:
     if interval not in ("1d", "1h", "5m", "1m", "1w", "1mo", "all"):

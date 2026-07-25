@@ -170,6 +170,32 @@ async def fetch_price(code: str) -> dict | None:
 
 # --- 캔들 -----------------------------------------------------------
 
+def _parse_candles(res) -> list[dict]:
+    """캔들 응답 → [{time(epoch s), open, high, low, close, volume}] 오름차순."""
+    rows = res.get("candles", []) if isinstance(res, dict) else []
+    out: list[dict] = []
+    for row in rows:
+        ts_iso = row.get("timestamp")
+        if not ts_iso:
+            continue
+        try:
+            t = int(datetime.fromisoformat(ts_iso.replace("Z", "+00:00")).timestamp())
+            out.append(
+                {
+                    "time": t,
+                    "open": float(row["openPrice"]),
+                    "high": float(row["highPrice"]),
+                    "low": float(row["lowPrice"]),
+                    "close": float(row["closePrice"]),
+                    "volume": float(row.get("volume") or 0),
+                }
+            )
+        except Exception:
+            continue
+    out.sort(key=lambda x: x["time"])
+    return out
+
+
 async def fetch_candles(code: str, interval: str = "1d", count: int = 100) -> list[dict]:
     """캔들 차트. interval='1m'|'1d', 최대 200개.
 
@@ -195,32 +221,66 @@ async def fetch_candles(code: str, interval: str = "1d", count: int = 100) -> li
             )
             r.raise_for_status()
             res = _unwrap(r.json()) or {}
-        rows = res.get("candles", []) if isinstance(res, dict) else []
-        out: list[dict] = []
-        for row in rows:
-            ts_iso = row.get("timestamp")
-            if not ts_iso:
-                continue
-            try:
-                t = int(
-                    datetime.fromisoformat(ts_iso.replace("Z", "+00:00")).timestamp()
-                )
-                out.append(
-                    {
-                        "time": t,
-                        "open": float(row["openPrice"]),
-                        "high": float(row["highPrice"]),
-                        "low": float(row["lowPrice"]),
-                        "close": float(row["closePrice"]),
-                        "volume": float(row.get("volume") or 0),
-                    }
-                )
-            except Exception:
-                continue
-        out.sort(key=lambda x: x["time"])
-        return out
+        return _parse_candles(res)
     except Exception as e:
         logger.debug("Toss candles failed {} {}: {}", code, interval, e)
+        return []
+
+
+# --- 시장 지표 (지수: 코스피/코스닥 등) -----------------------------
+
+async def fetch_index_prices(symbols: list[str]) -> dict[str, Decimal]:
+    """시장 지표 현재가. GET /api/v1/market-indicators/prices. {symbol: lastPrice}."""
+    if not _configured() or not symbols:
+        return {}
+    headers = await _auth_headers()
+    if not headers:
+        return {}
+    out: dict[str, Decimal] = {}
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.get(
+                f"{_base()}/api/v1/market-indicators/prices",
+                params={"symbols": ",".join(symbols)},
+                headers=headers,
+            )
+            r.raise_for_status()
+            rows = _unwrap(r.json()) or []
+        for row in rows:
+            s = row.get("symbol")
+            lp = row.get("lastPrice")
+            if s and lp is not None:
+                try:
+                    out[s] = Decimal(str(lp))
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.debug("Toss index prices failed: {}", e)
+    return out
+
+
+async def fetch_index_candles(
+    symbol: str, interval: str = "1d", count: int = 30
+) -> list[dict]:
+    """시장 지표 캔들. GET /api/v1/market-indicators/{symbol}/candles."""
+    if not _configured():
+        return []
+    headers = await _auth_headers()
+    if not headers:
+        return []
+    count = max(1, min(count, 200))
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.get(
+                f"{_base()}/api/v1/market-indicators/{symbol}/candles",
+                params={"interval": interval, "count": count},
+                headers=headers,
+            )
+            r.raise_for_status()
+            res = _unwrap(r.json()) or {}
+        return _parse_candles(res)
+    except Exception as e:
+        logger.debug("Toss index candles failed {}: {}", symbol, e)
         return []
 
 
