@@ -43,9 +43,9 @@ export function Chart({ data, priceScale = 1, unitLabel, integerOnly }: Props) {
 
   useEffect(() => {
     if (!ref.current) return;
-    const bgColor = isDark ? "#16181D" : "#FFFFFF";
+    const bgColor = isDark ? "#16181D" : "#F8F9FB";
     const textColor = isDark ? "#B0B8C1" : "#4E5968";
-    const gridColor = isDark ? "#23262D" : "#F2F4F6";
+    const gridColor = isDark ? "#23262D" : "#E6E9EE";
     const chart = createChart(ref.current, {
       autoSize: true,
       layout: {
