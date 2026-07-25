@@ -11,6 +11,7 @@ import asyncio
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from loguru import logger
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
@@ -423,6 +424,8 @@ async def indicators() -> list[dict]:
 async def orderbook(market: str, code: str) -> dict:
     """호가 (Toss). 미지원/실패 시 빈 호가."""
     ob = await _toss.fetch_orderbook(code)
+    n = (len(ob.get("asks", [])) + len(ob.get("bids", []))) if ob else 0
+    logger.info("orderbook diag: market={} code={} levels={}", market, code, n)
     return ob or {"asks": [], "bids": [], "currency": None}
 
 
