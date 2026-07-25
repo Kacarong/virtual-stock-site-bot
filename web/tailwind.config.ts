@@ -20,16 +20,17 @@ const config: Config = {
         },
         up: "#FF4D4D",   // 한국식: 상승 빨강
         down: "#3182F6", // 한국식: 하락 파랑
+        // 라이트/다크 테마 토큰 (globals.css의 CSS 변수 참조)
         ink: {
-          1: "#191F28",
-          2: "#4E5968",
-          3: "#8B95A1",
-          4: "#B0B8C1",
+          1: "rgb(var(--ink-1) / <alpha-value>)",
+          2: "rgb(var(--ink-2) / <alpha-value>)",
+          3: "rgb(var(--ink-3) / <alpha-value>)",
+          4: "rgb(var(--ink-4) / <alpha-value>)",
         },
         bg: {
-          1: "#FFFFFF",
-          2: "#F9FAFB",
-          3: "#F2F4F6",
+          1: "rgb(var(--bg-1) / <alpha-value>)",
+          2: "rgb(var(--bg-2) / <alpha-value>)",
+          3: "rgb(var(--bg-3) / <alpha-value>)",
         },
       },
       fontFamily: {

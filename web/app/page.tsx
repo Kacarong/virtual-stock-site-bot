@@ -135,7 +135,7 @@ export default function Home() {
       <SearchBox />
 
       {/* 총자산 카드 */}
-      <div className="rounded-3xl bg-white p-6 shadow-sm">
+      <div className="rounded-3xl bg-bg-1 p-6 shadow-sm">
         <p className="text-xs text-ink-3">총자산 (원화 환산)</p>
         <p className="mt-1 text-3xl font-bold">{fmtKRW(s.total_assets_krw)}</p>
         <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
@@ -176,11 +176,11 @@ export default function Home() {
 
       {/* 현금 카드 */}
       <div className="grid grid-cols-2 gap-4">
-        <div className="rounded-2xl bg-white p-5 shadow-sm">
+        <div className="rounded-2xl bg-bg-1 p-5 shadow-sm">
           <p className="text-xs text-ink-3">현금 (원)</p>
           <p className="mt-1 text-xl font-bold">{fmtKRW(data.cash_krw)}</p>
         </div>
-        <div className="rounded-2xl bg-white p-5 shadow-sm">
+        <div className="rounded-2xl bg-bg-1 p-5 shadow-sm">
           <div className="flex items-start justify-between">
             <div>
               <p className="text-xs text-ink-3">현금 (달러)</p>
@@ -211,7 +211,7 @@ export default function Home() {
       <PopularBoard />
 
       {/* 보유 종목 (시장별 그룹) */}
-      <div className="rounded-3xl bg-white shadow-sm">
+      <div className="rounded-3xl bg-bg-1 shadow-sm">
         <div className="flex items-center justify-between border-b border-bg-3 px-6 py-4">
           <h2 className="font-semibold">보유 종목</h2>
           <Link

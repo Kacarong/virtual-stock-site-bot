@@ -49,10 +49,10 @@ export function SearchBox() {
         onFocus={() => setOpen(true)}
         onBlur={() => setTimeout(() => setOpen(false), 150)}
         placeholder="종목명 또는 코드 검색 (예: 삼성, 005930, AAPL, KRW-BTC)"
-        className="w-full rounded-2xl border border-bg-3 bg-bg-2 px-4 py-3 text-sm outline-none focus:border-brand focus:bg-white"
+        className="w-full rounded-2xl border border-bg-3 bg-bg-2 px-4 py-3 text-sm outline-none focus:border-brand focus:bg-bg-1"
       />
       {open && hits.length > 0 && (
-        <div className="absolute z-20 mt-2 w-full overflow-hidden rounded-2xl border border-bg-3 bg-white shadow-lg">
+        <div className="absolute z-20 mt-2 w-full overflow-hidden rounded-2xl border border-bg-3 bg-bg-1 shadow-lg">
           {hits.map((h) => (
             <button
               key={h.id}

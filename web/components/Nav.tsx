@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
 import { api } from "@/lib/api";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 type Me = {
   id: number;
@@ -37,12 +38,13 @@ export function Nav() {
   ];
 
   return (
-    <nav className="sticky top-0 z-10 border-b border-bg-3 bg-white/80 backdrop-blur">
+    <nav className="sticky top-0 z-10 border-b border-bg-3 bg-bg-1/80 backdrop-blur">
       <div className="mx-auto flex max-w-5xl items-center justify-between px-4 py-3">
         <Link href="/" className="text-lg font-bold text-ink-1">
           papertrade
         </Link>
         <div className="flex items-center gap-1">
+          <ThemeToggle />
           {tabs.map((t) => (
             <Link
               key={t.href}

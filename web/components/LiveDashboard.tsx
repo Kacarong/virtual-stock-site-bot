@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import useSWR from "swr";
 import { api } from "@/lib/api";
 
@@ -45,8 +45,8 @@ const SORTS: { key: Sort; label: string }[] = [
   { key: "market_cap", label: "시가총액" },
 ];
 
-const UP = "#F5475B";
-const DOWN = "#4C82FB";
+const UP = "#FF4D4D";
+const DOWN = "#3182F6";
 
 function fmtCompact(n?: number | null): string {
   if (n == null) return "-";
@@ -70,10 +70,10 @@ function fmtPriceCell(row: Row): string {
 }
 
 function pctText(n?: number | null): { t: string; c: string } {
-  if (n == null || !isFinite(Number(n))) return { t: "-", c: "text-gray-500" };
+  if (n == null || !isFinite(Number(n))) return { t: "-", c: "text-ink-3" };
   const v = Number(n);
   const sign = v > 0 ? "+" : "";
-  const c = v > 0 ? "text-[#F5475B]" : v < 0 ? "text-[#4C82FB]" : "text-gray-400";
+  const c = v > 0 ? "text-up" : v < 0 ? "text-down" : "text-ink-3";
   return { t: `${sign}${v.toFixed(2)}%`, c };
 }
 
@@ -106,7 +106,7 @@ function Logo({ row }: { row: Row }) {
   const url = `https://static.toss.im/png-icons/securities/icn-sec-fill-${row.code}.png`;
   if (err)
     return (
-      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#2b2f36] text-[11px] text-gray-300">
+      <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-bg-3 text-[11px] text-ink-2">
         {row.name.slice(0, 1)}
       </div>
     );
@@ -141,11 +141,11 @@ function IndicatorBar() {
         return (
           <div
             key={it.key}
-            className="flex items-center justify-between rounded-2xl border border-[#23262d] bg-[#16181d] px-5 py-4"
+            className="flex items-center justify-between rounded-2xl border border-bg-3 bg-bg-1 px-5 py-4"
           >
             <div>
-              <div className="text-sm text-gray-400">{it.label}</div>
-              <div className="mt-1 text-xl font-bold text-white">{priceStr}</div>
+              <div className="text-sm text-ink-3">{it.label}</div>
+              <div className="mt-1 text-xl font-bold text-ink-1">{priceStr}</div>
               <div className={`mt-0.5 text-sm ${p.c}`}>{p.t}</div>
             </div>
             <Spark data={it.spark} />
@@ -160,15 +160,6 @@ export function LiveDashboard() {
   const router = useRouter();
   const [market, setMarket] = useState<MarketKey>("KRX");
   const [sort, setSort] = useState<Sort>("value");
-
-  // 다크 대시보드: 뷰포트 전체를 어둡게 (마운트 동안만)
-  useEffect(() => {
-    const prev = document.body.style.background;
-    document.body.style.background = "#0f1115";
-    return () => {
-      document.body.style.background = prev;
-    };
-  }, []);
 
   const sortsForMarket = SORTS.filter(
     (s) => !(market === "UPBIT" && s.key === "market_cap")
@@ -192,113 +183,108 @@ export function LiveDashboard() {
   const rows = data || [];
 
   return (
-    <div className="-mx-4 -my-6 min-h-screen bg-[#0f1115] px-4 py-6 text-gray-200">
-      <div className="mx-auto max-w-5xl">
-        <div className="mb-5 flex items-center justify-between">
-          <h1 className="text-xl font-bold text-white">실시간 차트</h1>
-          <Link href="/" className="text-sm text-gray-400 hover:text-white">
-            기존 대시보드 →
-          </Link>
-        </div>
-
-        <IndicatorBar />
-
-        {/* 시장 탭 */}
-        <div className="mb-3 flex gap-2">
-          {MARKETS.map((m) => (
-            <button
-              key={m.key}
-              onClick={() => {
-                setMarket(m.key);
-                if (m.key === "UPBIT" && sort === "market_cap") setSort("value");
-              }}
-              className={`rounded-full px-4 py-1.5 text-sm font-semibold transition ${
-                market === m.key
-                  ? "bg-white text-[#0f1115]"
-                  : "bg-[#1b1e24] text-gray-400 hover:text-white"
-              }`}
-            >
-              {m.label}
-            </button>
-          ))}
-        </div>
-
-        {/* 정렬 칩 */}
-        <div className="mb-4 flex flex-wrap gap-2">
-          {sortsForMarket.map((s) => (
-            <button
-              key={s.key}
-              onClick={() => setSort(s.key)}
-              className={`rounded-full px-3 py-1 text-xs font-medium transition ${
-                sort === s.key
-                  ? "bg-[#2b2f36] text-white"
-                  : "bg-[#16181d] text-gray-500 hover:text-gray-300"
-              }`}
-            >
-              {s.label}
-            </button>
-          ))}
-        </div>
-
-        {/* 랭킹 테이블 */}
-        <div className="overflow-hidden rounded-2xl border border-[#23262d] bg-[#16181d]">
-          <div className="grid grid-cols-[36px_1fr_110px_90px_100px] items-center gap-2 border-b border-[#23262d] px-4 py-3 text-xs text-gray-500 sm:grid-cols-[36px_1fr_120px_90px_110px_110px]">
-            <div>순위</div>
-            <div>종목</div>
-            <div className="text-right">현재가</div>
-            <div className="text-right">등락률</div>
-            <div className="hidden text-right sm:block">거래대금</div>
-            <div className="text-right">시가총액</div>
-          </div>
-
-          {isLoading && rows.length === 0 && (
-            <div className="px-4 py-10 text-center text-sm text-gray-500">
-              불러오는 중…
-            </div>
-          )}
-          {!isLoading && rows.length === 0 && (
-            <div className="px-4 py-10 text-center text-sm text-gray-500">
-              데이터가 없습니다. (Toss 허용 IP 등록을 확인해 주세요)
-            </div>
-          )}
-
-          {rows.map((row, i) => {
-            const p = pctText(row.change_pct);
-            return (
-              <Link
-                key={`${row.market}-${row.code}`}
-                href={`/symbols/${row.market}/${encodeURIComponent(row.code)}`}
-                className="grid grid-cols-[36px_1fr_110px_90px_100px] items-center gap-2 border-b border-[#1b1e24] px-4 py-3 text-sm transition last:border-0 hover:bg-[#1b1e24] sm:grid-cols-[36px_1fr_120px_90px_110px_110px]"
-              >
-                <div className="text-gray-500">{i + 1}</div>
-                <div className="flex min-w-0 items-center gap-2.5">
-                  <Logo row={row} />
-                  <div className="min-w-0">
-                    <div className="truncate font-medium text-white">
-                      {row.name}
-                    </div>
-                    <div className="text-[11px] text-gray-500">{row.code}</div>
-                  </div>
-                </div>
-                <div className="text-right font-medium text-white">
-                  {fmtPriceCell(row)}
-                </div>
-                <div className={`text-right font-medium ${p.c}`}>{p.t}</div>
-                <div className="hidden text-right text-gray-400 sm:block">
-                  {fmtCompact(row.value)}
-                </div>
-                <div className="text-right text-gray-400">
-                  {fmtCompact(row.market_cap)}
-                </div>
-              </Link>
-            );
-          })}
-        </div>
-
-        <p className="mt-4 text-center text-xs text-gray-600">
-          시세·랭킹·로고 제공: 토스증권 · 5초마다 자동 갱신
-        </p>
+    <div>
+      <div className="mb-5 flex items-center justify-between">
+        <h1 className="text-xl font-bold text-ink-1">실시간 차트</h1>
       </div>
+
+      <IndicatorBar />
+
+      {/* 시장 탭 */}
+      <div className="mb-3 flex gap-2">
+        {MARKETS.map((m) => (
+          <button
+            key={m.key}
+            onClick={() => {
+              setMarket(m.key);
+              if (m.key === "UPBIT" && sort === "market_cap") setSort("value");
+            }}
+            className={`rounded-full px-4 py-1.5 text-sm font-semibold transition ${
+              market === m.key
+                ? "bg-ink-1 text-bg-1"
+                : "bg-bg-3 text-ink-3 hover:text-ink-1"
+            }`}
+          >
+            {m.label}
+          </button>
+        ))}
+      </div>
+
+      {/* 정렬 칩 */}
+      <div className="mb-4 flex flex-wrap gap-2">
+        {sortsForMarket.map((s) => (
+          <button
+            key={s.key}
+            onClick={() => setSort(s.key)}
+            className={`rounded-full px-3 py-1 text-xs font-medium transition ${
+              sort === s.key
+                ? "bg-bg-3 text-ink-1"
+                : "bg-bg-1 text-ink-3 hover:text-ink-2"
+            }`}
+          >
+            {s.label}
+          </button>
+        ))}
+      </div>
+
+      {/* 랭킹 테이블 */}
+      <div className="overflow-hidden rounded-2xl border border-bg-3 bg-bg-1">
+        <div className="grid grid-cols-[36px_1fr_110px_90px_100px] items-center gap-2 border-b border-bg-3 px-4 py-3 text-xs text-ink-3 sm:grid-cols-[36px_1fr_120px_90px_110px_110px]">
+          <div>순위</div>
+          <div>종목</div>
+          <div className="text-right">현재가</div>
+          <div className="text-right">등락률</div>
+          <div className="hidden text-right sm:block">거래대금</div>
+          <div className="text-right">시가총액</div>
+        </div>
+
+        {isLoading && rows.length === 0 && (
+          <div className="px-4 py-10 text-center text-sm text-ink-3">
+            불러오는 중…
+          </div>
+        )}
+        {!isLoading && rows.length === 0 && (
+          <div className="px-4 py-10 text-center text-sm text-ink-3">
+            데이터가 없습니다. (Toss 허용 IP 등록을 확인해 주세요)
+          </div>
+        )}
+
+        {rows.map((row, i) => {
+          const p = pctText(row.change_pct);
+          return (
+            <Link
+              key={`${row.market}-${row.code}`}
+              href={`/symbols/${row.market}/${encodeURIComponent(row.code)}`}
+              className="grid grid-cols-[36px_1fr_110px_90px_100px] items-center gap-2 border-b border-bg-3 px-4 py-3 text-sm transition last:border-0 hover:bg-bg-2 sm:grid-cols-[36px_1fr_120px_90px_110px_110px]"
+            >
+              <div className="text-ink-3">{i + 1}</div>
+              <div className="flex min-w-0 items-center gap-2.5">
+                <Logo row={row} />
+                <div className="min-w-0">
+                  <div className="truncate font-medium text-ink-1">
+                    {row.name}
+                  </div>
+                  <div className="text-[11px] text-ink-3">{row.code}</div>
+                </div>
+              </div>
+              <div className="text-right font-medium text-ink-1">
+                {fmtPriceCell(row)}
+              </div>
+              <div className={`text-right font-medium ${p.c}`}>{p.t}</div>
+              <div className="hidden text-right text-ink-3 sm:block">
+                {fmtCompact(row.value)}
+              </div>
+              <div className="text-right text-ink-3">
+                {fmtCompact(row.market_cap)}
+              </div>
+            </Link>
+          );
+        })}
+      </div>
+
+      <p className="mt-4 text-center text-xs text-ink-4">
+        시세·랭킹·로고 제공: 토스증권 · 5초마다 자동 갱신
+      </p>
     </div>
   );
 }

@@ -89,7 +89,7 @@ function PopularPanel({
   const rate = fx?.usdkrw ? Number(fx.usdkrw) : null;
 
   return (
-    <div className="flex flex-col rounded-3xl bg-white shadow-sm">
+    <div className="flex flex-col rounded-3xl bg-bg-1 shadow-sm">
       <div className="border-b border-bg-3 px-5 py-3">
         <h3 className="font-semibold whitespace-nowrap">{title}</h3>
         <div className="mt-2 flex flex-wrap gap-1">

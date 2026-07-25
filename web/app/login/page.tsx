@@ -32,7 +32,7 @@ export default function Login() {
 
   return (
     <div className="mx-auto mt-16 max-w-md">
-      <div className="rounded-3xl bg-white p-8 shadow-sm">
+      <div className="rounded-3xl bg-bg-1 p-8 shadow-sm">
         <h1 className="text-2xl font-bold">로그인</h1>
         <p className="mt-2 text-sm text-ink-3">
           Discord 계정으로 로그인하여 모의투자를 시작하세요.

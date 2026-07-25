@@ -70,7 +70,7 @@ export function IndustryBoard() {
   }, [active]);
 
   return (
-    <div className="rounded-3xl bg-white shadow-sm">
+    <div className="rounded-3xl bg-bg-1 shadow-sm">
       <div className="flex items-center justify-between border-b border-bg-3 px-6 py-4">
         <h2 className="font-semibold">종류별 종목</h2>
         <span className="text-[11px] text-ink-3">업종·테마별 큐레이션</span>
@@ -135,7 +135,7 @@ export function IndustryBoard() {
           {filteredItems.length > 0 ? (
             <ul className="grid grid-cols-2 gap-px bg-bg-3 sm:grid-cols-3">
               {filteredItems.map((it) => (
-                <li key={`${it.market}-${it.code}`} className="bg-white">
+                <li key={`${it.market}-${it.code}`} className="bg-bg-1">
                   <Link
                     href={`/symbols/${it.market}/${encodeURIComponent(it.code)}`}
                     className="block px-4 py-3 hover:bg-bg-2"

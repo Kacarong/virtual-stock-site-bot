@@ -82,7 +82,7 @@ export function FxModal({ cashKrw, cashUsd, rate, onClose, onDone }: Props) {
       onClick={onClose}
     >
       <div
-        className="w-full max-w-sm rounded-3xl bg-white p-6 shadow-xl"
+        className="w-full max-w-sm rounded-3xl bg-bg-1 p-6 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between">
@@ -145,7 +145,7 @@ export function FxModal({ cashKrw, cashUsd, rate, onClose, onDone }: Props) {
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
             placeholder="0"
-            className="mt-1 w-full rounded-xl border border-bg-3 bg-white px-4 py-3 text-sm outline-none focus:border-brand"
+            className="mt-1 w-full rounded-xl border border-bg-3 bg-bg-1 px-4 py-3 text-sm outline-none focus:border-brand"
           />
           <div className="mt-2 flex gap-1">
             {[0.25, 0.5, 1].map((p) => (

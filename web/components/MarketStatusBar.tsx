@@ -21,7 +21,7 @@ export function MarketStatusBar() {
     refreshInterval: 60000,
   });
   return (
-    <div className="flex flex-wrap gap-2 rounded-2xl bg-white px-4 py-2 shadow-sm">
+    <div className="flex flex-wrap gap-2 rounded-2xl bg-bg-1 px-4 py-2 shadow-sm">
       {LABELS.map((m) => {
         const open = data?.[m.key]?.open ?? (m.key === "UPBIT");
         return (

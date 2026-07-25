@@ -54,7 +54,7 @@ function GroupSection({ title, items }: { title: string; items: Holding[] }) {
   if (items.length === 0) return null;
   const sumKrw = items.reduce((s, h) => s + Number(h.value_krw || 0), 0);
   return (
-    <div className="rounded-3xl bg-white shadow-sm">
+    <div className="rounded-3xl bg-bg-1 shadow-sm">
       <div className="flex items-center justify-between border-b border-bg-3 px-6 py-3">
         <h3 className="font-semibold">{title}</h3>
         <div className="text-xs text-ink-3">
@@ -102,7 +102,7 @@ function RealizedCard() {
 
   const total = data ? Number(data.total_krw) : 0;
   return (
-    <div className="rounded-3xl bg-white p-5 shadow-sm">
+    <div className="rounded-3xl bg-bg-1 p-5 shadow-sm">
       <div className="flex items-center justify-between">
         <h3 className="font-semibold">실현손익</h3>
         <div className="flex gap-1">
@@ -206,7 +206,7 @@ export default function HoldingsPage() {
       </div>
 
       {/* 평가손익 요약 */}
-      <div className="rounded-3xl bg-white p-5 shadow-sm">
+      <div className="rounded-3xl bg-bg-1 p-5 shadow-sm">
         <p className="text-xs text-ink-3">총 평가 (원화 환산)</p>
         <p className="mt-1 text-2xl font-bold">{fmtKRW(s.total_value_krw)}</p>
         <p className={`mt-1 text-sm ${pctClass(s.total_pnl_pct)}`}>
@@ -238,7 +238,7 @@ export default function HoldingsPage() {
       <RealizedCard />
 
       {data.holdings.length === 0 ? (
-        <div className="rounded-3xl bg-white p-8 text-center text-sm text-ink-3 shadow-sm">
+        <div className="rounded-3xl bg-bg-1 p-8 text-center text-sm text-ink-3 shadow-sm">
           보유 종목이 없습니다.
         </div>
       ) : (

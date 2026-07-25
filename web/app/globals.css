@@ -2,20 +2,29 @@
 @tailwind components;
 @tailwind utilities;
 
+/* 라이트/다크 테마 토큰 (RGB 채널값 — Tailwind alpha 지원용).
+   .dark 클래스가 <html>에 붙으면 다크로 전환된다. */
 :root {
-  --background: #ffffff;
-  --foreground: #191f28;
+  --bg-1: 255 255 255; /* 카드/표면 */
+  --bg-2: 249 250 251; /* 페이지 배경 */
+  --bg-3: 242 244 246; /* 경계선/옅은 면 */
+  --ink-1: 25 31 40;
+  --ink-2: 78 89 104;
+  --ink-3: 139 149 161;
+  --ink-4: 176 184 193;
 }
 
-html, body {
-  background: var(--background);
-  color: var(--foreground);
+.dark {
+  --bg-1: 22 24 29; /* #16181d 카드 */
+  --bg-2: 15 17 21; /* #0f1115 페이지 */
+  --bg-3: 35 38 45; /* #23262d 경계선 */
+  --ink-1: 230 232 235;
+  --ink-2: 176 184 193;
+  --ink-3: 139 149 161;
+  --ink-4: 110 118 129;
+}
+
+html,
+body {
   -webkit-font-smoothing: antialiased;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0f1115;
-    --foreground: #e6e8eb;
-  }
 }

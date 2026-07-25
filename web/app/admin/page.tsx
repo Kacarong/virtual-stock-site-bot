@@ -57,7 +57,7 @@ export default function Admin() {
         <h1 className="text-xl font-bold">관리자</h1>
         <button
           onClick={syncSymbols}
-          className="rounded-xl border border-bg-3 bg-white px-3 py-1.5 text-sm hover:bg-bg-2"
+          className="rounded-xl border border-bg-3 bg-bg-1 px-3 py-1.5 text-sm hover:bg-bg-2"
         >
           종목 마스터 수동 동기화
         </button>
@@ -67,7 +67,7 @@ export default function Admin() {
         <div className="rounded-xl bg-bg-2 p-3 text-sm text-ink-2">{msg}</div>
       )}
 
-      <div className="overflow-hidden rounded-2xl bg-white shadow-sm">
+      <div className="overflow-hidden rounded-2xl bg-bg-1 shadow-sm">
         <table className="w-full text-sm">
           <thead className="bg-bg-2 text-xs text-ink-3">
             <tr>
@@ -110,13 +110,13 @@ export default function Admin() {
       </div>
 
       {sel && (
-        <div className="rounded-2xl bg-white p-6 shadow-sm">
+        <div className="rounded-2xl bg-bg-1 p-6 shadow-sm">
           <h2 className="font-semibold">사용자 #{sel} 잔고 조정</h2>
           <div className="mt-4 grid grid-cols-2 gap-3">
             <select
               value={currency}
               onChange={(e) => setCurrency(e.target.value as any)}
-              className="rounded-xl border border-bg-3 bg-white px-3 py-2 text-sm"
+              className="rounded-xl border border-bg-3 bg-bg-1 px-3 py-2 text-sm"
             >
               <option value="KRW">KRW</option>
               <option value="USD">USD</option>
@@ -125,14 +125,14 @@ export default function Admin() {
               value={amount}
               onChange={(e) => setAmount(e.target.value)}
               placeholder="금액 (음수=차감)"
-              className="rounded-xl border border-bg-3 bg-white px-3 py-2 text-sm"
+              className="rounded-xl border border-bg-3 bg-bg-1 px-3 py-2 text-sm"
             />
           </div>
           <input
             value={memo}
             onChange={(e) => setMemo(e.target.value)}
             placeholder="메모 (선택)"
-            className="mt-2 w-full rounded-xl border border-bg-3 bg-white px-3 py-2 text-sm"
+            className="mt-2 w-full rounded-xl border border-bg-3 bg-bg-1 px-3 py-2 text-sm"
           />
           <div className="mt-4 flex gap-2">
             <button

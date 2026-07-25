@@ -194,7 +194,7 @@ export default function SymbolPage({
 
   return (
     <div className="space-y-6">
-      <div className="rounded-3xl bg-white p-6 shadow-sm">
+      <div className="rounded-3xl bg-bg-1 p-6 shadow-sm">
         <div className="flex items-start justify-between">
           <div>
             <p className="text-xs text-ink-3">
@@ -320,7 +320,7 @@ export default function SymbolPage({
       </div>
 
       {/* 주문 패널 */}
-      <div className="rounded-3xl bg-white p-6 shadow-sm">
+      <div className="rounded-3xl bg-bg-1 p-6 shadow-sm">
         <div className="flex items-center justify-between">
           <h2 className="font-semibold">주문하기</h2>
           {!isOpen && nextOpen && (
@@ -443,7 +443,7 @@ export default function SymbolPage({
             <input
               value={qty}
               onChange={(e) => setQty(e.target.value)}
-              className="mt-1 w-full rounded-xl border border-bg-3 bg-white px-4 py-3 text-sm outline-none focus:border-brand"
+              className="mt-1 w-full rounded-xl border border-bg-3 bg-bg-1 px-4 py-3 text-sm outline-none focus:border-brand"
             />
           </div>
           {(orderType === "LIMIT" || orderType === "SCHEDULED") && (
@@ -454,7 +454,7 @@ export default function SymbolPage({
               <input
                 value={limitPrice}
                 onChange={(e) => setLimitPrice(e.target.value)}
-                className="mt-1 w-full rounded-xl border border-bg-3 bg-white px-4 py-3 text-sm outline-none focus:border-brand"
+                className="mt-1 w-full rounded-xl border border-bg-3 bg-bg-1 px-4 py-3 text-sm outline-none focus:border-brand"
               />
             </div>
           )}

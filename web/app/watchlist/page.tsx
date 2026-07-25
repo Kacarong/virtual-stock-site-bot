@@ -104,7 +104,7 @@ export default function Watchlist() {
   }));
 
   return (
-    <div className="rounded-3xl bg-white shadow-sm">
+    <div className="rounded-3xl bg-bg-1 shadow-sm">
       <div className="border-b border-bg-3 px-6 py-4">
         <h2 className="font-semibold">관심 종목</h2>
       </div>

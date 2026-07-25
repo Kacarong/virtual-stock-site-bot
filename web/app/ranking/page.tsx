@@ -35,7 +35,7 @@ export default function RankingPage() {
         </p>
       </div>
 
-      <div className="rounded-3xl bg-white shadow-sm">
+      <div className="rounded-3xl bg-bg-1 shadow-sm">
         {isLoading && !data ? (
           <div className="p-8 text-center text-sm text-ink-3">불러오는 중…</div>
         ) : !data?.length ? (
