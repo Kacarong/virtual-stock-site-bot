@@ -52,32 +52,34 @@ def _lock_for(market: str) -> asyncio.Lock:
     return lk
 
 
-def _spawn_bg_refresh(market: str) -> None:
+def _spawn_bg_refresh(market: str, sort: Sort = "value") -> None:
     """백그라운드 popular fetch를 띄움 (이미 도는 중이면 무시).
 
     화면이 stale/DB 폴백으로 즉시 뜨는 동안 진짜 데이터를 가져와 캐시 채움.
     _force_full=True로 호출하여 폴백 단축경로를 건너뛰고 실제 fetch 수행.
+    요청된 sort별로 갱신한다 (toss_value 등은 value 캐시로 대체 불가하므로 필수).
     """
-    existing = _bg_refresh.get(market)
+    key = (market, sort)
+    existing = _bg_refresh.get(key)
     if existing and not existing.done():
         return
 
     async def _go() -> None:
         try:
             if market == "KRX":
-                await popular_krx("value", 30, _force_full=True)
+                await popular_krx(sort, 30, _force_full=True)
             elif market == "US":
-                await popular_us("value", 30, _force_full=True)
+                await popular_us(sort, 30, _force_full=True)
             elif market == "UPBIT":
-                await popular_upbit("value", 30)
+                await popular_upbit(sort, 30)
         except Exception as e:
-            logger.debug("bg refresh {} failed: {}", market, e)
+            logger.debug("bg refresh {} {} failed: {}", market, sort, e)
         finally:
-            _bg_refresh.pop(market, None)
+            _bg_refresh.pop(key, None)
 
     try:
         loop = asyncio.get_running_loop()
-        _bg_refresh[market] = loop.create_task(_go())
+        _bg_refresh[key] = loop.create_task(_go())
     except RuntimeError:
         pass
 
@@ -501,13 +503,13 @@ async def popular_krx(sort: Sort, limit: int = 30, *, _force_full: bool = False)
         fallback = _immediate_fallback("KRX", sort, limit)
         if fallback is not None:
             if not lock.locked():
-                _spawn_bg_refresh("KRX")
+                _spawn_bg_refresh("KRX", sort)
             return fallback
 
         # 폴백도 없음 (진짜 콜드 부팅) → 백그라운드에 fetch 떠넘기고 즉시 빈 응답
         # SWR이 4초 polling으로 다음 호출에 받아감 (사용자 멍하니 대기 방지)
         if not lock.locked():
-            _spawn_bg_refresh("KRX")
+            _spawn_bg_refresh("KRX", sort)
         return []
 
     # _force_full=True: 백그라운드 task에서 호출됨 — 진짜 fetch 실행
@@ -842,12 +844,12 @@ async def popular_us(sort: Sort, limit: int = 30, *, _force_full: bool = False) 
         fallback = _immediate_fallback("US", sort, limit)
         if fallback is not None:
             if not lock.locked():
-                _spawn_bg_refresh("US")
+                _spawn_bg_refresh("US", sort)
             return fallback
 
         # 폴백도 없음 → 백그라운드에 fetch 떠넘기고 즉시 빈 응답
         if not lock.locked():
-            _spawn_bg_refresh("US")
+            _spawn_bg_refresh("US", sort)
         return []
 
     # _force_full=True: 백그라운드 task에서 호출됨 — 진짜 fetch 실행
