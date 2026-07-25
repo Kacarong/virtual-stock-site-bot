@@ -7,6 +7,9 @@
 """
 from __future__ import annotations
 
+import asyncio
+import time
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
@@ -24,6 +27,47 @@ from ..services.sources import toss as _toss
 from ..services.symbol_sync import sync_all
 
 router = APIRouter(prefix="/market", tags=["market"])
+
+# --- 거래비율(호가 잔량 근사) 캐시 ------------------------------------
+# 종목별 매수/매도 호가 총잔량 비율. 응답을 막지 않도록 캐시만 즉시 반환하고
+# 만료분은 백그라운드로 갱신한다. (Toss "거래 비율"의 근사)
+_ratio_cache: dict[str, tuple[float, float | None]] = {}
+_RATIO_TTL = 30.0
+
+
+def _spawn_ratio_refresh(codes: list[str]) -> None:
+    now = time.time()
+    need = [
+        c
+        for c in codes
+        if not (_ratio_cache.get(c) and now - _ratio_cache[c][0] < _RATIO_TTL)
+    ]
+    if not need:
+        return
+
+    async def _go() -> None:
+        sem = asyncio.Semaphore(6)
+
+        async def _one(code: str) -> None:
+            async with sem:
+                try:
+                    ob = await _toss.fetch_orderbook(code)
+                except Exception:
+                    ob = None
+                r: float | None = None
+                if ob:
+                    bids = sum(x.get("volume") or 0 for x in ob.get("bids", []))
+                    asks = sum(x.get("volume") or 0 for x in ob.get("asks", []))
+                    tot = bids + asks
+                    r = (bids / tot) if tot > 0 else None
+                _ratio_cache[code] = (time.time(), r)
+
+        await asyncio.gather(*(_one(c) for c in need))
+
+    try:
+        asyncio.get_running_loop().create_task(_go())
+    except RuntimeError:
+        pass
 
 
 @router.get("/search")
@@ -424,6 +468,13 @@ async def popular(
         for r in rows:
             r["symbol_id"] = id_map.get((r["market"], r["code"]))
             r["industry"] = industry_label(r["market"], r["code"], r.get("name"))
+        # 거래비율(호가 근사) — 코인 제외. 캐시 즉시반환 + 만료분 백그라운드 갱신.
+        if market != "UPBIT":
+            row_codes = [r["code"] for r in rows]
+            _spawn_ratio_refresh(row_codes)
+            for r in rows:
+                c = _ratio_cache.get(r["code"])
+                r["buy_ratio"] = c[1] if c else None
     return rows
 
 

@@ -17,6 +17,7 @@ type Row = {
   market_cap?: number | null;
   symbol_id?: number | null;
   industry?: string | null;
+  buy_ratio?: number | null;
 };
 
 type Indicator = {
@@ -266,7 +267,7 @@ export function LiveDashboard() {
 
       {/* 랭킹 테이블 */}
       <div className="overflow-hidden rounded-2xl border border-bg-3 bg-bg-1">
-        <div className="grid grid-cols-[28px_32px_1fr_110px_90px_100px] items-center gap-2 border-b border-bg-3 px-4 py-3 text-xs text-ink-3 sm:grid-cols-[28px_32px_1fr_120px_90px_110px_110px] lg:grid-cols-[28px_32px_1fr_120px_90px_110px_110px_130px]">
+        <div className="grid grid-cols-[28px_32px_1fr_110px_90px_100px] items-center gap-2 border-b border-bg-3 px-4 py-3 text-xs text-ink-3 sm:grid-cols-[28px_32px_1fr_120px_90px_110px_110px] lg:grid-cols-[28px_32px_1fr_120px_90px_110px_110px_120px] xl:grid-cols-[28px_32px_1fr_120px_90px_110px_110px_120px_130px]">
           <div />
           <div>순위</div>
           <div>종목</div>
@@ -274,7 +275,8 @@ export function LiveDashboard() {
           <div className="text-right">등락률</div>
           <div className="hidden text-right sm:block">거래대금</div>
           <div className="text-right">시가총액</div>
-          <div className="hidden lg:block">산업</div>
+          <div className="hidden text-center lg:block">매수·매도</div>
+          <div className="hidden xl:block">산업</div>
         </div>
 
         {isLoading && rows.length === 0 && (
@@ -294,7 +296,7 @@ export function LiveDashboard() {
             <Link
               key={`${row.market}-${row.code}`}
               href={`/symbols/${row.market}/${encodeURIComponent(row.code)}`}
-              className="grid grid-cols-[28px_32px_1fr_110px_90px_100px] items-center gap-2 border-b border-bg-3 px-4 py-3 text-sm transition last:border-0 hover:bg-bg-2 sm:grid-cols-[28px_32px_1fr_120px_90px_110px_110px] lg:grid-cols-[28px_32px_1fr_120px_90px_110px_110px_130px]"
+              className="grid grid-cols-[28px_32px_1fr_110px_90px_100px] items-center gap-2 border-b border-bg-3 px-4 py-3 text-sm transition last:border-0 hover:bg-bg-2 sm:grid-cols-[28px_32px_1fr_120px_90px_110px_110px] lg:grid-cols-[28px_32px_1fr_120px_90px_110px_110px_120px] xl:grid-cols-[28px_32px_1fr_120px_90px_110px_110px_120px_130px]"
             >
               <span
                 role="button"
@@ -328,6 +330,26 @@ export function LiveDashboard() {
                 {fmtCompact(row.market_cap)}
               </div>
               <div className="hidden lg:block">
+                {typeof row.buy_ratio === "number" ? (
+                  <div className="flex items-center gap-1">
+                    <span className="w-5 text-right text-[10px] font-medium text-up">
+                      {Math.round(row.buy_ratio * 100)}
+                    </span>
+                    <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-down/40">
+                      <div
+                        className="h-full rounded-full bg-up"
+                        style={{ width: `${row.buy_ratio * 100}%` }}
+                      />
+                    </div>
+                    <span className="w-5 text-[10px] font-medium text-down">
+                      {100 - Math.round(row.buy_ratio * 100)}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="text-center text-[11px] text-ink-4">-</div>
+                )}
+              </div>
+              <div className="hidden xl:block">
                 {row.industry ? (
                   <span className="inline-block truncate rounded bg-bg-3 px-2 py-0.5 text-[11px] text-ink-2">
                     {row.industry}
