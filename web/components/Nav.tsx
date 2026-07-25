@@ -28,12 +28,11 @@ export function Nav() {
   }
 
   const tabs = [
-    { href: "/", label: "대시보드" },
+    { href: "/", label: "홈" },
     { href: "/categories", label: "종류별 종목" },
-    { href: "/holdings", label: "보유종목" },
+    { href: "/account", label: "내 계좌" },
     { href: "/ranking", label: "자산 랭킹" },
     { href: "/watchlist", label: "관심" },
-    { href: "/orders", label: "주문/거래" },
   ];
 
   return (

@@ -1,5 +1,6 @@
 import "./globals.css";
 import type { Metadata } from "next";
+import { MyInvestmentPanel } from "@/components/MyInvestmentPanel";
 import { Nav } from "@/components/Nav";
 import { SwrProvider } from "@/components/SwrProvider";
 
@@ -22,7 +23,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="min-h-screen bg-bg-2 font-sans text-ink-1">
         <SwrProvider>
           <Nav />
-          <div className="mx-auto max-w-5xl px-4 py-6">{children}</div>
+          <div className="mx-auto flex max-w-7xl gap-6 px-4 py-6">
+            <main className="min-w-0 flex-1">{children}</main>
+            {/* 오른쪽 상시 "내 투자" 패널 (Toss 스타일, lg 이상에서 표시) */}
+            <aside className="hidden w-80 shrink-0 lg:block">
+              <div className="sticky top-20">
+                <MyInvestmentPanel />
+              </div>
+            </aside>
+          </div>
         </SwrProvider>
       </body>
     </html>
