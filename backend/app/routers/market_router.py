@@ -34,7 +34,16 @@ router = APIRouter(prefix="/market", tags=["market"])
 # 종목별 매수/매도 호가 총잔량 비율. 응답을 막지 않도록 캐시만 즉시 반환하고
 # 만료분은 백그라운드로 갱신한다. (Toss "거래 비율"의 근사)
 _ratio_cache: dict[str, tuple[float, float | None]] = {}
-_RATIO_TTL = 30.0
+_RATIO_TTL = 60.0
+
+
+def _store_ratio(code: str, r: float | None) -> None:
+    """거래비율 캐시 저장. 일시적 실패(None)로 기존 값을 지우지 않는다(깜빡임 방지)."""
+    prev = _ratio_cache.get(code)
+    if r is None and prev and prev[1] is not None:
+        _ratio_cache[code] = (time.time(), prev[1])  # 이전 값 유지
+    else:
+        _ratio_cache[code] = (time.time(), r)
 
 
 def _spawn_ratio_refresh(codes: list[str]) -> None:
@@ -62,7 +71,7 @@ def _spawn_ratio_refresh(codes: list[str]) -> None:
                     asks = sum(x.get("volume") or 0 for x in ob.get("asks", []))
                     tot = bids + asks
                     r = (bids / tot) if tot > 0 else None
-                _ratio_cache[code] = (time.time(), r)
+                _store_ratio(code, r)
 
         await asyncio.gather(*(_one(c) for c in need))
 
@@ -85,9 +94,8 @@ def _spawn_upbit_ratio_refresh(codes: list[str]) -> None:
 
     async def _go() -> None:
         ratios = await _upbit.fetch_orderbook_ratios(need)
-        t = time.time()
         for c in need:
-            _ratio_cache[c] = (t, ratios.get(c))
+            _store_ratio(c, ratios.get(c))
 
     try:
         asyncio.get_running_loop().create_task(_go())
