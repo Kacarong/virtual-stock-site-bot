@@ -77,15 +77,32 @@ async def on_startup() -> None:
             logger.warning("KRX full sync failed: {}", e)
 
         try:
+            # 기본 탭(토스 거래대금) 100개를 미리 데워 콜드 스타트 완화
             await _aio.gather(
-                _popular("KRX", "value", 30),
-                _popular("US", "value", 30),
-                _popular("UPBIT", "value", 30),
+                _popular("KRX", "toss_value", 100),
+                _popular("US", "toss_value", 100),
+                _popular("UPBIT", "value", 100),
                 return_exceptions=True,
             )
             logger.info("popular warmup done")
         except Exception as e:
             logger.warning("popular warmup failed: {}", e)
+
+        # 기본 탭의 거래비율(호가)도 미리 채움 — 첫 진입 시 "-" 최소화
+        try:
+            from .routers.market_router import (
+                _spawn_ratio_refresh,
+                _spawn_upbit_ratio_refresh,
+            )
+
+            for mk, sort in (("KRX", "toss_value"), ("US", "toss_value")):
+                rows = await _popular(mk, sort, 100)
+                _spawn_ratio_refresh([r["code"] for r in rows])
+            up_rows = await _popular("UPBIT", "value", 100)
+            _spawn_upbit_ratio_refresh([r["code"] for r in up_rows])
+            logger.info("ratio warmup triggered")
+        except Exception as e:
+            logger.debug("ratio warmup failed: {}", e)
 
         # 인기 상위 10종목의 일봉 히스토리도 미리 적재 (차트 첫 진입 빠르게)
         try:

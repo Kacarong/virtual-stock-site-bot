@@ -503,8 +503,33 @@ async def popular(
         for r in rows:
             r["symbol_id"] = id_map.get((r["market"], r["code"]))
             r["industry"] = industry_label(r["market"], r["code"], r.get("name"))
-        # 거래비율(호가 근사). 국내/해외=Toss, 코인=Upbit. 캐시 즉시반환 + 백그라운드 갱신.
         row_codes = [r["code"] for r in rows]
+        # 시가총액 보강: rows에 비어 있으면 종목정보 캐시(발행주식수)로 즉시 채움
+        # → 콜드 스타트에도 60초 캐시 사이클을 안 기다리고 바로 반영.
+        if market != "UPBIT":
+            info = await _toss.fetch_stock_info(row_codes)  # 1h 캐시라 대개 즉시
+            usdkrw = 0.0
+            if market == "US":
+                try:
+                    from ..services.fx import get_usdkrw
+
+                    usdkrw = float(await get_usdkrw() or 0)
+                except Exception:
+                    usdkrw = 0.0
+            for r in rows:
+                if r.get("market_cap"):
+                    continue
+                fi = info.get(r["code"]) or {}
+                shares = fi.get("shares_outstanding")
+                price = r.get("price")
+                if not (shares and price):
+                    continue
+                if market == "US":
+                    if usdkrw:
+                        r["market_cap"] = shares * price * usdkrw
+                else:
+                    r["market_cap"] = shares * price
+        # 거래비율(호가 근사). 국내/해외=Toss, 코인=Upbit. 캐시 즉시반환 + 백그라운드 갱신.
         if market == "UPBIT":
             _spawn_upbit_ratio_refresh(row_codes)
         else:
