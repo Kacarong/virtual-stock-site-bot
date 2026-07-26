@@ -412,6 +412,17 @@ async def _toss_popular_rows(country: str, sort: Sort, limit: int) -> list[dict]
     kr_seed_name = {code: name for code, name, _, _ in KR_SEEDS}
     us_seed = {code: (name, mkt) for code, name, mkt, _ in US_SEEDS}
 
+    # US 시가총액을 원화로 환산하기 위한 환율 (KR은 불필요)
+    usdkrw = 0.0
+    if country == "US":
+        try:
+            from .fx import get_usdkrw
+
+            rate = await get_usdkrw()
+            usdkrw = float(rate) if rate else 0.0
+        except Exception:
+            usdkrw = 0.0
+
     out: list[dict] = []
     for r in raw:
         code = str(r["code"])
@@ -425,19 +436,26 @@ async def _toss_popular_rows(country: str, sort: Sort, limit: int) -> list[dict]
         asset_type = (ti.get("asset_type") or db_type or "STOCK").upper()
         if asset_type in ("ETF", "ETN"):
             continue
+        price = _safe_float(r.get("price"))
+        if price <= 0:
+            continue
+        # 시가총액 = 발행주식수 × 현재가. US는 환율로 원화 환산(Toss 표기와 동일).
+        shares = ti.get("shares_outstanding")
         if country == "KR":
             name = ti.get("name") or db_name or kr_seed_name.get(code) or code
             market = "KRX"
-            cap = KRX_MARKET_CAP_FALLBACK.get(code)
-            market_cap = float(cap) if cap else None
+            if shares and shares > 0:
+                market_cap = shares * price
+            else:
+                cap = KRX_MARKET_CAP_FALLBACK.get(code)
+                market_cap = float(cap) if cap else None
         else:
             seed_name, seed_market = us_seed.get(code, (None, None))
             name = ti.get("name") or db_name or seed_name or code
             market = db_market or ti.get("market") or seed_market or "NASDAQ"
-            market_cap = None
-        price = _safe_float(r.get("price"))
-        if price <= 0:
-            continue
+            market_cap = (
+                shares * price * usdkrw if (shares and shares > 0 and usdkrw) else None
+            )
         out.append(
             {
                 "market": market,

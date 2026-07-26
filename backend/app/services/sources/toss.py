@@ -391,6 +391,11 @@ async def fetch_stock_info(codes: list[str]) -> dict[str, dict]:
             name = row.get("name") or row.get("englishName")
             if not code or not name:
                 continue
+            shares = row.get("sharesOutstanding")
+            try:
+                shares_f = float(shares) if shares not in (None, "") else None
+            except Exception:
+                shares_f = None
             out[code] = {
                 "name": name,
                 "english_name": row.get("englishName"),
@@ -398,6 +403,7 @@ async def fetch_stock_info(codes: list[str]) -> dict[str, dict]:
                 "currency": row.get("currency") or "KRW",
                 "asset_type": _asset_type(row.get("securityType")),
                 "status": row.get("status"),
+                "shares_outstanding": shares_f,
             }
     return out
 
