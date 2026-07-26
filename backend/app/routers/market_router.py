@@ -25,6 +25,7 @@ from ..services.history import get_history
 from ..services.popular import popular as popular_svc
 from ..services.quotes import get_quote
 from ..services.sources import toss as _toss
+from ..services.sources import upbit as _upbit
 from ..services.symbol_sync import sync_all
 
 router = APIRouter(prefix="/market", tags=["market"])
@@ -64,6 +65,29 @@ def _spawn_ratio_refresh(codes: list[str]) -> None:
                 _ratio_cache[code] = (time.time(), r)
 
         await asyncio.gather(*(_one(c) for c in need))
+
+    try:
+        asyncio.get_running_loop().create_task(_go())
+    except RuntimeError:
+        pass
+
+
+def _spawn_upbit_ratio_refresh(codes: list[str]) -> None:
+    """코인 거래비율 — Upbit 호가 총잔량 비율(배치, 저렴). 30s 캐시."""
+    now = time.time()
+    need = [
+        c
+        for c in codes
+        if not (_ratio_cache.get(c) and now - _ratio_cache[c][0] < _RATIO_TTL)
+    ]
+    if not need:
+        return
+
+    async def _go() -> None:
+        ratios = await _upbit.fetch_orderbook_ratios(need)
+        t = time.time()
+        for c in need:
+            _ratio_cache[c] = (t, ratios.get(c))
 
     try:
         asyncio.get_running_loop().create_task(_go())
@@ -471,13 +495,15 @@ async def popular(
         for r in rows:
             r["symbol_id"] = id_map.get((r["market"], r["code"]))
             r["industry"] = industry_label(r["market"], r["code"], r.get("name"))
-        # 거래비율(호가 근사) — 코인 제외. 캐시 즉시반환 + 만료분 백그라운드 갱신.
-        if market != "UPBIT":
-            row_codes = [r["code"] for r in rows]
+        # 거래비율(호가 근사). 국내/해외=Toss, 코인=Upbit. 캐시 즉시반환 + 백그라운드 갱신.
+        row_codes = [r["code"] for r in rows]
+        if market == "UPBIT":
+            _spawn_upbit_ratio_refresh(row_codes)
+        else:
             _spawn_ratio_refresh(row_codes)
-            for r in rows:
-                c = _ratio_cache.get(r["code"])
-                r["buy_ratio"] = c[1] if c else None
+        for r in rows:
+            c = _ratio_cache.get(r["code"])
+            r["buy_ratio"] = c[1] if c else None
     return rows
 
 

@@ -51,6 +51,35 @@ async def fetch_candles(code: str, unit: str = "1d", count: int = 200) -> list[d
         return []
 
 
+async def fetch_orderbook_ratios(codes: list[str]) -> dict[str, float | None]:
+    """호가 매수/매도 총잔량 비율. {code: bid/(bid+ask)} (0~1). 최대 여러개 한 번에."""
+    if not codes:
+        return {}
+    out: dict[str, float | None] = {}
+    for i in range(0, len(codes), 100):  # Upbit orderbook 다건 지원
+        chunk = codes[i : i + 100]
+        try:
+            async with httpx.AsyncClient(timeout=10) as c:
+                r = await c.get(
+                    f"{BASE}/v1/orderbook", params={"markets": ",".join(chunk)}
+                )
+                r.raise_for_status()
+                rows = r.json()
+            for row in rows:
+                mk = row.get("market")
+                try:
+                    ask = float(row.get("total_ask_size") or 0)
+                    bid = float(row.get("total_bid_size") or 0)
+                except Exception:
+                    ask = bid = 0.0
+                tot = ask + bid
+                if mk:
+                    out[mk] = (bid / tot) if tot > 0 else None
+        except Exception as e:
+            logger.warning("upbit orderbook failed {}: {}", chunk[:3], e)
+    return out
+
+
 async def fetch_tickers_full(codes: list[str]) -> list[dict]:
     """원시 ticker 행 반환 — 거래대금 등 부가정보 포함."""
     if not codes:

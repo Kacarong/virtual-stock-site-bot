@@ -236,6 +236,12 @@ export function LiveDashboard() {
 
   const rows = data || [];
 
+  // 코인은 시가총액·산업 컬럼 제외 → 그리드 트랙도 시장별로 다르게
+  const isUpbit = market === "UPBIT";
+  const gridCols = isUpbit
+    ? "grid-cols-[28px_32px_1fr_110px_90px] sm:grid-cols-[28px_32px_1fr_120px_90px_110px] lg:grid-cols-[28px_32px_1fr_120px_90px_110px_120px]"
+    : "grid-cols-[28px_32px_1fr_110px_90px_100px] sm:grid-cols-[28px_32px_1fr_120px_90px_110px_110px] lg:grid-cols-[28px_32px_1fr_120px_90px_110px_110px_120px] xl:grid-cols-[28px_32px_1fr_120px_90px_110px_110px_120px_130px]";
+
   return (
     <div>
       <div className="mb-5 flex items-center justify-between">
@@ -306,16 +312,16 @@ export function LiveDashboard() {
 
       {/* 랭킹 테이블 */}
       <div className="overflow-hidden rounded-2xl border border-bg-3 bg-bg-1">
-        <div className="grid grid-cols-[28px_32px_1fr_110px_90px_100px] items-center gap-2 border-b border-bg-3 px-4 py-3 text-xs text-ink-3 sm:grid-cols-[28px_32px_1fr_120px_90px_110px_110px] lg:grid-cols-[28px_32px_1fr_120px_90px_110px_110px_120px] xl:grid-cols-[28px_32px_1fr_120px_90px_110px_110px_120px_130px]">
+        <div className={`grid ${gridCols} items-center gap-2 border-b border-bg-3 px-4 py-3 text-xs text-ink-3`}>
           <div />
           <div>순위</div>
           <div>종목</div>
           <div className="text-right">현재가</div>
           <div className="text-right">등락률</div>
           <div className="hidden text-right sm:block">거래대금</div>
-          <div className="text-right">시가총액</div>
+          {!isUpbit && <div className="text-right">시가총액</div>}
           <div className="hidden text-center lg:block">거래 비율</div>
-          <div className="hidden xl:block">산업</div>
+          {!isUpbit && <div className="hidden xl:block">산업</div>}
         </div>
 
         {isLoading && rows.length === 0 && (
@@ -335,7 +341,7 @@ export function LiveDashboard() {
             <Link
               key={`${row.market}-${row.code}`}
               href={`/symbols/${row.market}/${encodeURIComponent(row.code)}`}
-              className="grid grid-cols-[28px_32px_1fr_110px_90px_100px] items-center gap-2 border-b border-bg-3 px-4 py-3 text-sm transition last:border-0 hover:bg-bg-2 sm:grid-cols-[28px_32px_1fr_120px_90px_110px_110px] lg:grid-cols-[28px_32px_1fr_120px_90px_110px_110px_120px] xl:grid-cols-[28px_32px_1fr_120px_90px_110px_110px_120px_130px]"
+              className={`grid ${gridCols} items-center gap-2 border-b border-bg-3 px-4 py-3 text-sm transition last:border-0 hover:bg-bg-2`}
             >
               <span
                 role="button"
@@ -365,9 +371,11 @@ export function LiveDashboard() {
               <div className="hidden text-right text-ink-3 sm:block">
                 {fmtCompact(row.value)}
               </div>
-              <div className="text-right text-ink-3">
-                {fmtCompact(row.market_cap)}
-              </div>
+              {!isUpbit && (
+                <div className="text-right text-ink-3">
+                  {fmtCompact(row.market_cap)}
+                </div>
+              )}
               <div className="hidden lg:block">
                 {typeof row.buy_ratio === "number" ? (
                   <div className="flex items-center gap-1">
@@ -388,13 +396,15 @@ export function LiveDashboard() {
                   <div className="text-center text-[11px] text-ink-4">-</div>
                 )}
               </div>
-              <div className="hidden xl:block">
-                {row.industry ? (
-                  <span className="inline-block truncate rounded bg-bg-3 px-2 py-0.5 text-[11px] text-ink-2">
-                    {row.industry}
-                  </span>
-                ) : null}
-              </div>
+              {!isUpbit && (
+                <div className="hidden xl:block">
+                  {row.industry ? (
+                    <span className="inline-block truncate rounded bg-bg-3 px-2 py-0.5 text-[11px] text-ink-2">
+                      {row.industry}
+                    </span>
+                  ) : null}
+                </div>
+              )}
             </Link>
           );
         })}
