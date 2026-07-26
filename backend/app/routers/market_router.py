@@ -46,13 +46,18 @@ def _store_ratio(code: str, r: float | None) -> None:
         _ratio_cache[code] = (time.time(), r)
 
 
+def _ratio_stale(code: str, now: float) -> bool:
+    """갱신 필요 여부. 실패/빈값(None)은 짧게(15s) 재시도, 정상값은 _RATIO_TTL."""
+    e = _ratio_cache.get(code)
+    if not e:
+        return True
+    ts, val = e
+    return now - ts >= (_RATIO_TTL if val is not None else 15.0)
+
+
 def _spawn_ratio_refresh(codes: list[str]) -> None:
     now = time.time()
-    need = [
-        c
-        for c in codes
-        if not (_ratio_cache.get(c) and now - _ratio_cache[c][0] < _RATIO_TTL)
-    ]
+    need = [c for c in codes if _ratio_stale(c, now)]
     if not need:
         return
 
@@ -84,11 +89,7 @@ def _spawn_ratio_refresh(codes: list[str]) -> None:
 def _spawn_upbit_ratio_refresh(codes: list[str]) -> None:
     """코인 거래비율 — Upbit 호가 총잔량 비율(배치, 저렴). 30s 캐시."""
     now = time.time()
-    need = [
-        c
-        for c in codes
-        if not (_ratio_cache.get(c) and now - _ratio_cache[c][0] < _RATIO_TTL)
-    ]
+    need = [c for c in codes if _ratio_stale(c, now)]
     if not need:
         return
 
