@@ -198,7 +198,7 @@ export function LiveDashboard() {
   );
 
   const { data, error, isLoading } = useSWR<Row[]>(
-    `/market/popular?market=${market}&sort=${sort}&limit=30`,
+    `/market/popular?market=${market}&sort=${sort}&limit=100`,
     fetcher,
     {
       refreshInterval: (latest) =>
