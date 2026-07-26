@@ -427,16 +427,9 @@ async def _toss_popular_rows(country: str, sort: Sort, limit: int) -> list[dict]
     out: list[dict] = []
     for r in raw:
         code = str(r["code"])
-        # KRX 정상 종목코드는 6자리 숫자. 문자가 섞인 코드(예: 0156T0)는 ETN/특수
-        # 상품이라 제외(유형 조회가 429 등으로 실패해도 확실히 걸러짐).
-        if country == "KR" and not code.isdigit():
-            continue
+        # Toss 실시간차트는 ETF/ETN도 포함해 100개를 채운다 → 별도 필터 없이 그대로.
         db_name, db_market, db_type = db_info.get(code, (None, None, None))
         ti = toss_info.get(code) or {}
-        # Toss "실시간차트"는 주식만 표기 → ETF/ETN 제외 (유형 모르면 통과=주식 취급)
-        asset_type = (ti.get("asset_type") or db_type or "STOCK").upper()
-        if asset_type in ("ETF", "ETN"):
-            continue
         price = _safe_float(r.get("price"))
         if price <= 0:
             continue
