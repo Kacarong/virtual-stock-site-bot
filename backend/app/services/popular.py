@@ -66,12 +66,13 @@ def _spawn_bg_refresh(market: str, sort: Sort = "value") -> None:
 
     async def _go() -> None:
         try:
+            # 캐시를 100개까지 채운다 (프론트가 100 요청).
             if market == "KRX":
-                await popular_krx(sort, 30, _force_full=True)
+                await popular_krx(sort, 100, _force_full=True)
             elif market == "US":
-                await popular_us(sort, 30, _force_full=True)
+                await popular_us(sort, 100, _force_full=True)
             elif market == "UPBIT":
-                await popular_upbit(sort, 30)
+                await popular_upbit(sort, 100)
         except Exception as e:
             logger.debug("bg refresh {} {} failed: {}", market, sort, e)
         finally:

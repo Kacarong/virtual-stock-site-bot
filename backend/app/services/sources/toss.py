@@ -374,17 +374,29 @@ def _asset_type(security_type: str | None) -> str:
     return "STOCK"
 
 
-async def fetch_stock_info(codes: list[str]) -> dict[str, dict]:
-    """종목 기본정보(이름/시장/통화). GET /api/v1/stocks?symbols= (최대 200).
+# 종목정보 캐시 (이름·발행주식수·유형은 잘 안 바뀜 → 길게 캐시).
+_stock_info_cache: dict[str, tuple[float, dict]] = {}
+_STOCK_INFO_TTL = 3600.0  # 1시간
 
-    반환: {code: {name, english_name, market, currency, asset_type, status}}.
-    pykrx 전종목 목록에 없는 ETN/레버리지 등의 이름을 on-demand로 해결하는 용도.
+
+async def fetch_stock_info(codes: list[str]) -> dict[str, dict]:
+    """종목 기본정보(이름/시장/통화/발행주식수). GET /api/v1/stocks?symbols= (최대 200).
+
+    심볼별로 캐시(1h) — 탭 전환마다 재조회하지 않아 빠르고 429에 덜 취약.
     """
     if not _configured() or not codes:
         return {}
+    now = time.time()
     out: dict[str, dict] = {}
-    for i in range(0, len(codes), 200):
-        chunk = codes[i : i + 200]
+    missing: list[str] = []
+    for c in codes:
+        e = _stock_info_cache.get(c)
+        if e and now - e[0] < _STOCK_INFO_TTL:
+            out[c] = e[1]
+        else:
+            missing.append(c)
+    for i in range(0, len(missing), 200):
+        chunk = missing[i : i + 200]
         rows = await _authed_get("/api/v1/stocks", {"symbols": ",".join(chunk)}) or []
         for row in rows:
             code = row.get("symbol")
@@ -396,7 +408,7 @@ async def fetch_stock_info(codes: list[str]) -> dict[str, dict]:
                 shares_f = float(shares) if shares not in (None, "") else None
             except Exception:
                 shares_f = None
-            out[code] = {
+            info = {
                 "name": name,
                 "english_name": row.get("englishName"),
                 "market": _MARKET_MAP.get(row.get("market") or "", "KRX"),
@@ -405,6 +417,8 @@ async def fetch_stock_info(codes: list[str]) -> dict[str, dict]:
                 "status": row.get("status"),
                 "shares_outstanding": shares_f,
             }
+            _stock_info_cache[code] = (now, info)
+            out[code] = info
     return out
 
 
