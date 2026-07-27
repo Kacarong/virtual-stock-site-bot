@@ -96,9 +96,12 @@ def _immediate_fallback(market: str, sort: Sort, limit: int) -> list[dict] | Non
     # 1) 정확한 sort 캐시 (만료라도) — 이 sort에 맞춰 저장됐던 정확한 순서
     if (entry := _cache.get((market, sort))):
         return _sort_rows(list(entry[1]), sort)[:limit]
-    # 토스증권 기준(toss_*)은 시장 기준 캐시로 대체하지 않는다.
-    # (대체하면 시장 데이터가 토스 데이터로 오인됨 — 목록이 안 바뀌는 것처럼 보임)
+    # 토스증권 기준(toss_*)은 시장 기준 캐시로 대체하지 않되, 토스끼리는 재사용.
+    # (toss_volume 콜드 시 toss_value 캐시를 거래량 기준으로 재정렬 → 즉시 전환)
     if sort in ("toss_value", "toss_volume"):
+        for s in ("toss_value", "toss_volume"):
+            if (entry := _cache.get((market, s))):
+                return _sort_rows(list(entry[1]), sort)[:limit]
         return None
     # 2) 다른 sort 캐시 (만료 포함) — 같은 row 데이터, 단지 정렬키만 바꿔 재정렬
     #    원본 row에 정확한 volume/value/market_cap이 포함돼 있어 정확한 순서 보장

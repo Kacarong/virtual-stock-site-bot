@@ -85,10 +85,12 @@ async def on_startup() -> None:
             logger.warning("KRX full sync failed: {}", e)
 
         try:
-            # 기본 탭(토스 거래대금) 100개를 미리 데워 콜드 스타트 완화
+            # 주요 정렬 탭을 미리 데워 탭 전환 즉시 반응
             await _aio.gather(
                 _popular("KRX", "toss_value", 100),
+                _popular("KRX", "toss_volume", 100),
                 _popular("US", "toss_value", 100),
+                _popular("US", "toss_volume", 100),
                 _popular("UPBIT", "value", 100),
                 return_exceptions=True,
             )
