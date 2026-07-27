@@ -8,7 +8,9 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from loguru import logger
@@ -35,6 +37,40 @@ router = APIRouter(prefix="/market", tags=["market"])
 # 만료분은 백그라운드로 갱신한다. (Toss "거래 비율"의 근사)
 _ratio_cache: dict[str, tuple[float, float | None]] = {}
 _RATIO_TTL = 60.0
+_RATIO_CACHE_PATH = Path("/data/ratio_cache.json")
+_last_ratio_save = 0.0
+
+
+def _load_ratio_cache() -> None:
+    """재시작(재빌드) 후에도 거래비율이 바로 뜨도록 디스크에서 복원(값은 stale)."""
+    try:
+        if not _RATIO_CACHE_PATH.exists():
+            return
+        with open(_RATIO_CACHE_PATH, encoding="utf-8") as f:
+            d = json.load(f)
+        for k, arr in d.items():
+            _ratio_cache[k] = (float(arr[0]), arr[1])
+    except Exception:
+        pass
+
+
+def _save_ratio_cache() -> None:
+    global _last_ratio_save
+    now = time.time()
+    if now - _last_ratio_save < 20:  # 디바운스 (I/O 과다 방지)
+        return
+    _last_ratio_save = now
+    try:
+        _RATIO_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        tmp = _RATIO_CACHE_PATH.with_suffix(".tmp")
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({k: [ts, v] for k, (ts, v) in _ratio_cache.items()}, f)
+        tmp.replace(_RATIO_CACHE_PATH)
+    except Exception:
+        pass
+
+
+_load_ratio_cache()
 
 
 def _store_ratio(code: str, r: float | None) -> None:
@@ -44,6 +80,7 @@ def _store_ratio(code: str, r: float | None) -> None:
         _ratio_cache[code] = (time.time(), prev[1])  # 이전 값 유지
     else:
         _ratio_cache[code] = (time.time(), r)
+    _save_ratio_cache()
 
 
 def _ratio_stale(code: str, now: float) -> bool:
