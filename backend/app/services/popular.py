@@ -92,20 +92,18 @@ def _immediate_fallback(market: str, sort: Sort, limit: int) -> list[dict] | Non
     DB Price 폴백은 거래대금/거래량이 0이라 정렬 순서가 엉뚱하게 나옴
     (가나다 순) → 사용자가 잘못된 1위로 오인. 부정확할 바엔 차라리 빈 응답.
     """
-    sort_keys = ("value", "volume", "change", "decline", "market_cap")
     # 1) 정확한 sort 캐시 (만료라도) — 이 sort에 맞춰 저장됐던 정확한 순서
     if (entry := _cache.get((market, sort))):
         return _sort_rows(list(entry[1]), sort)[:limit]
-    # 토스증권 기준(toss_*)은 시장 기준 캐시로 대체하지 않되, 토스끼리는 재사용.
-    # (toss_volume 콜드 시 toss_value 캐시를 거래량 기준으로 재정렬 → 즉시 전환)
-    if sort in ("toss_value", "toss_volume"):
-        for s in ("toss_value", "toss_volume"):
-            if (entry := _cache.get((market, s))):
-                return _sort_rows(list(entry[1]), sort)[:limit]
-        return None
-    # 2) 다른 sort 캐시 (만료 포함) — 같은 row 데이터, 단지 정렬키만 바꿔 재정렬
-    #    원본 row에 정확한 volume/value/market_cap이 포함돼 있어 정확한 순서 보장
-    for s in sort_keys:
+    # 2) 캐시된 다른 정렬을 재정렬해 즉시 반환 (탭 전환 즉시 반응).
+    #    같은 기준(토스/시장) 우선, 없으면 다른 기준이라도. 정확 데이터는 백그라운드 갱신.
+    toss_sorts = ("toss_value", "toss_volume")
+    market_sorts = ("value", "volume", "change", "decline", "market_cap")
+    is_toss = sort in toss_sorts
+    order = (toss_sorts + market_sorts) if is_toss else (market_sorts + toss_sorts)
+    for s in order:
+        if s == sort:
+            continue
         if (entry := _cache.get((market, s))):
             return _sort_rows(list(entry[1]), sort)[:limit]
     return None
