@@ -124,8 +124,11 @@ export function Chart({
       wickDownColor: "#3182F6",
       borderVisible: false,
     });
+    // lightweight-charts는 시간축을 UTC로 렌더 → 로컬(KST 등) 표시를 위해
+    // 각 시간에 로컬 오프셋(초)을 더해 "가짜 UTC = 로컬시간"으로 만든다.
+    const tz = -new Date().getTimezoneOffset() * 60;
     const scaled = clean.map((d) => ({
-      time: d.time as any,
+      time: (d.time + tz) as any,
       open: d.open * priceScale,
       high: d.high * priceScale,
       low: d.low * priceScale,
@@ -148,7 +151,7 @@ export function Chart({
       });
       volume.setData(
         clean.map((d) => ({
-          time: d.time as any,
+          time: (d.time + tz) as any,
           value: isNum(d.volume) ? (d.volume as number) : 0,
           // 양봉=빨강, 음봉=파랑 (반투명)
           color: d.close >= d.open ? "#FF4D4D88" : "#3182F688",
@@ -174,8 +177,10 @@ export function Chart({
     const p = livePrice * priceScale;
     let bucket: number | null = null;
     if (intervalSec && intervalSec < 86400) {
-      bucket =
-        Math.floor(Math.floor(Date.now() / 1000) / intervalSec) * intervalSec;
+      // 캔들 시간이 로컬 오프셋만큼 shift돼 있으므로 버킷도 동일하게 맞춘다.
+      const tz = -new Date().getTimezoneOffset() * 60;
+      const nowShifted = Math.floor(Date.now() / 1000) + tz;
+      bucket = Math.floor(nowShifted / intervalSec) * intervalSec;
     }
     if (bucket != null && bucket > Number(last.time)) {
       const nc = { time: bucket, open: p, high: p, low: p, close: p } as any;
