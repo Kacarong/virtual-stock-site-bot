@@ -344,6 +344,15 @@ export default function SymbolPage({
                 market === "KRX" || (isUS && showKrw && !!rate)
               }
               livePrice={price ?? undefined}
+              intervalSec={
+                tf === "1m"
+                  ? 60
+                  : tf === "5m"
+                  ? 300
+                  : tf === "1h"
+                  ? 3600
+                  : undefined
+              }
             />
           ) : (
             <div className="grid h-[360px] place-items-center text-sm text-ink-3">

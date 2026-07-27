@@ -27,6 +27,8 @@ type Props = {
   integerOnly?: boolean;
   /** 실시간 현재가(원 통화 기준, priceScale 적용 전). 마지막 봉을 실시간 갱신. */
   livePrice?: number;
+  /** 봉 간격(초). 분/5분/1시간봉이면 시간 넘어갈 때 새 봉 생성. 일봉 등은 미지정. */
+  intervalSec?: number;
 };
 
 export function Chart({
@@ -35,6 +37,7 @@ export function Chart({
   unitLabel,
   integerOnly,
   livePrice,
+  intervalSec,
 }: Props) {
   const ref = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -161,25 +164,39 @@ export function Chart({
     };
   }, [data, priceScale, unitLabel, integerOnly, isDark]);
 
-  // 실시간 현재가로 마지막 봉 갱신 (전체 재생성 없이 update만)
+  // 실시간 현재가로 봉 갱신 (전체 재생성 없이 update만).
+  // 분/5분/1시간봉이면 시간이 다음 봉으로 넘어갈 때 새 봉을 append.
   useEffect(() => {
     if (livePrice == null || !isFinite(livePrice)) return;
     const c = candleRef.current;
     const last = lastCandleRef.current;
     if (!c || !last) return;
     const p = livePrice * priceScale;
-    const updated = {
-      time: last.time,
-      open: last.open,
-      high: Math.max(last.high, p),
-      low: Math.min(last.low, p),
-      close: p,
-    };
-    try {
-      c.update(updated as any);
-      lastCandleRef.current = updated;
-    } catch {}
-  }, [livePrice, priceScale]);
+    let bucket: number | null = null;
+    if (intervalSec && intervalSec < 86400) {
+      bucket =
+        Math.floor(Math.floor(Date.now() / 1000) / intervalSec) * intervalSec;
+    }
+    if (bucket != null && bucket > Number(last.time)) {
+      const nc = { time: bucket, open: p, high: p, low: p, close: p } as any;
+      try {
+        c.update(nc);
+        lastCandleRef.current = nc;
+      } catch {}
+    } else {
+      const updated = {
+        time: last.time,
+        open: last.open,
+        high: Math.max(last.high, p),
+        low: Math.min(last.low, p),
+        close: p,
+      };
+      try {
+        c.update(updated as any);
+        lastCandleRef.current = updated;
+      } catch {}
+    }
+  }, [livePrice, priceScale, intervalSec]);
 
   return <div ref={ref} className="h-[420px] w-full" />;
 }
