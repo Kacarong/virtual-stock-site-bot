@@ -30,6 +30,12 @@ type Portfolio = {
 
 const fetcher = (u: string) => api(u);
 
+const HOLDING_GROUPS: { key: string; label: string; markets: string[] }[] = [
+  { key: "KRX", label: "국내주식", markets: ["KRX"] },
+  { key: "US", label: "해외주식", markets: ["NASDAQ", "NYSE", "AMEX"] },
+  { key: "UPBIT", label: "코인", markets: ["UPBIT"] },
+];
+
 export function MyInvestmentPanel() {
   const { data, error, mutate } = useSWR<Portfolio>("/portfolio", fetcher, {
     refreshInterval: 5000,
@@ -87,27 +93,53 @@ export function MyInvestmentPanel() {
             보유 종목이 없어요
           </p>
         ) : (
-          <ul className="divide-y divide-bg-3">
-            {data.holdings.slice(0, 8).map((h) => (
-              <li key={h.symbol_id}>
-                <Link
-                  href={`/symbols/${h.market}/${encodeURIComponent(h.code)}`}
-                  className="flex items-center justify-between py-2 hover:opacity-80"
+          <div className="space-y-3">
+            {HOLDING_GROUPS.map((g) => {
+              const items = data.holdings.filter((h) =>
+                g.markets.includes(h.market)
+              );
+              if (items.length === 0) return null;
+              return (
+                <div
+                  key={g.key}
+                  className="border-t border-bg-3 pt-2 first:border-0 first:pt-0"
                 >
-                  <span className="min-w-0 truncate text-sm">{h.name}</span>
-                  <span className="ml-2 shrink-0 text-right">
-                    <span className="block text-sm font-medium">
-                      {fmtPrice(h.value, h.market, h.currency)}
-                    </span>
-                    <span className={`block text-[11px] ${pctClass(h.pnl_pct)}`}>
-                      {Number(h.pnl_pct) >= 0 ? "+" : ""}
-                      {Number(h.pnl_pct).toFixed(2)}%
-                    </span>
-                  </span>
-                </Link>
-              </li>
-            ))}
-          </ul>
+                  <p className="mb-1 text-[11px] font-semibold text-ink-3">
+                    {g.label}
+                  </p>
+                  <ul className="divide-y divide-bg-3">
+                    {items.map((h) => (
+                      <li key={h.symbol_id}>
+                        <Link
+                          href={`/symbols/${h.market}/${encodeURIComponent(
+                            h.code
+                          )}`}
+                          className="flex items-center justify-between py-2 hover:opacity-80"
+                        >
+                          <span className="min-w-0 truncate text-sm">
+                            {h.name}
+                          </span>
+                          <span className="ml-2 shrink-0 text-right">
+                            <span className="block text-sm font-medium">
+                              {fmtPrice(h.value, h.market, h.currency)}
+                            </span>
+                            <span
+                              className={`block text-[11px] ${pctClass(
+                                h.pnl_pct
+                              )}`}
+                            >
+                              {Number(h.pnl_pct) >= 0 ? "+" : ""}
+                              {Number(h.pnl_pct).toFixed(2)}%
+                            </span>
+                          </span>
+                        </Link>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              );
+            })}
+          </div>
         )}
       </div>
 
