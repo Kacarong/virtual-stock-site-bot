@@ -1,5 +1,6 @@
 import "./globals.css";
 import type { Metadata } from "next";
+import { Footer } from "@/components/Footer";
 import { MyInvestmentPanel } from "@/components/MyInvestmentPanel";
 import { Nav } from "@/components/Nav";
 import { SwrProvider } from "@/components/SwrProvider";
@@ -34,6 +35,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </div>
             </aside>
           </div>
+          <Footer />
         </SwrProvider>
       </body>
     </html>
