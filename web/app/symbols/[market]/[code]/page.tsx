@@ -73,7 +73,8 @@ export default function SymbolPage({
     fetcher
   );
   const { data: mstatus } = useSWR<MarketStatus>("/market/status", fetcher, {
-    refreshInterval: 60000,
+    refreshInterval: 15000,
+    keepPreviousData: true,
   });
   const { data: watchlist, mutate: mutateWatch } = useSWR<any[]>(
     "/watchlist",

@@ -323,7 +323,7 @@ async def fetch_rankings(
         {
             "type": tp,
             "marketCountry": market_country,
-            "duration": "1d",
+            "duration": "realtime",  # Toss "실시간" 탭과 동일한 기준
             "count": count,
         },
     )

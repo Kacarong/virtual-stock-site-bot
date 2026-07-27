@@ -22,7 +22,8 @@ const LABELS: { key: string; label: string }[] = [
 
 export function MarketStatusBar() {
   const { data } = useSWR<Status>("/market/status", fetcher, {
-    refreshInterval: 60000,
+    refreshInterval: 15000,
+    keepPreviousData: true,
   });
   return (
     <div className="flex flex-wrap gap-2 rounded-2xl bg-bg-1 px-4 py-2 shadow-sm">

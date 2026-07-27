@@ -67,6 +67,14 @@ async def on_startup() -> None:
     _load_disk_cache()
 
     async def _warmup() -> None:
+        # 장 세션을 가장 먼저 확보 (다른 대량 호출로 429 나기 전에) → /status 신뢰성
+        try:
+            from .services.market_calendar import refresh_sessions as _rs0
+
+            await _aio.gather(_rs0("KR"), _rs0("US"), return_exceptions=True)
+        except Exception as e:
+            logger.debug("initial session warmup failed: {}", e)
+
         # KRX 전종목 마스터 동기화 (KOSPI+KOSDAQ 약 2500종목, 검색 풀세트 확보)
         try:
             from .services.symbol_sync import sync_krx as _sync_krx

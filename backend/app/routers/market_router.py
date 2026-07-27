@@ -373,12 +373,19 @@ async def quote(market: str, code: str, db: Session = Depends(get_db)) -> dict:
 async def status() -> dict:
     """시장별 세션(정규장·애프터마켓·데이마켓·프리마켓) + 개장 여부 + 운영시간."""
     from datetime import datetime
-    from ..services.market_calendar import HOURS, KST, market_session, refresh_sessions
-
-    # Toss 세션을 최신화 (하루 단위지만 날짜 롤오버/장중 갱신 대비)
-    await asyncio.gather(
-        refresh_sessions("KR"), refresh_sessions("US"), return_exceptions=True
+    from ..services.market_calendar import (
+        HOURS,
+        KST,
+        _sessions_today,
+        market_session,
+        refresh_sessions,
     )
+
+    # 캐시가 오늘 것이 아니면 백그라운드로 갱신(응답은 블로킹하지 않음).
+    # 워밍업/주기 루프가 이미 채워두므로 대개 캐시 히트.
+    for _c in ("KR", "US"):
+        if _sessions_today(_c) is None:
+            asyncio.create_task(refresh_sessions(_c))
 
     out = {}
     for m in ("KRX", "NASDAQ", "NYSE", "UPBIT"):
