@@ -23,7 +23,8 @@ class Settings(BaseSettings):
     # Discord OAuth (Stage 5)
     DISCORD_CLIENT_ID: str = ""
     DISCORD_CLIENT_SECRET: str = ""
-    DISCORD_REDIRECT_URI: str = "http://localhost:8000/auth/discord/callback"
+    # 콜백은 프론트(3000) 프록시를 경유해야 세션 쿠키가 웹앱 도메인에 붙는다.
+    DISCORD_REDIRECT_URI: str = "http://localhost:3000/api/auth/discord/callback"
     DISCORD_BOT_TOKEN: str = ""
 
     # KIS (Stage 2)
