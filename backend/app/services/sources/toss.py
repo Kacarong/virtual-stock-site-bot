@@ -318,18 +318,22 @@ async def fetch_rankings(
     if not tp:
         return []
     count = max(1, min(count, 100))
-    res = await _authed_get(
-        "/api/v1/rankings",
-        {
-            "type": tp,
-            "marketCountry": market_country,
-            "duration": "realtime",  # Toss "실시간" 탭과 동일한 기준
-            "count": count,
-        },
-    )
-    if res is None:
-        return []
-    rows = res.get("rankings", []) if isinstance(res, dict) else []
+    # 장중엔 realtime(토스 "실시간" 탭과 동일), 마감 후엔 빈 값이라 1d로 폴백.
+    rows: list = []
+    for dur in ("realtime", "1d"):
+        res = await _authed_get(
+            "/api/v1/rankings",
+            {
+                "type": tp,
+                "marketCountry": market_country,
+                "duration": dur,
+                "count": count,
+            },
+        )
+        if isinstance(res, dict):
+            rows = res.get("rankings") or []
+        if rows:
+            break
     out: list[dict] = []
     for row in rows:
         code = row.get("symbol")
