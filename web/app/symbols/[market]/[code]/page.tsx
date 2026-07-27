@@ -186,7 +186,25 @@ export default function SymbolPage({
     }
   }
 
-  const price = q?.price ? Number(q.price) : null;
+  // 코인은 실시간 스트림(SSE)으로 현재가 갱신 → 헤더/차트/주문 모두 실시간
+  const [coinLive, setCoinLive] = useState<number | null>(null);
+  useEffect(() => {
+    setCoinLive(null);
+    if (market !== "UPBIT") return;
+    const es = new EventSource("/api/market/stream/coin");
+    es.onmessage = (e) => {
+      try {
+        const d = JSON.parse(e.data);
+        const entry = d[code];
+        if (entry && typeof entry.price === "number") setCoinLive(entry.price);
+      } catch {}
+    };
+    return () => es.close();
+  }, [market, code]);
+
+  const rawPrice = q?.price ? Number(q.price) : null;
+  const price =
+    market === "UPBIT" && coinLive !== null ? coinLive : rawPrice;
   const prev = q?.prev_close ? Number(q.prev_close) : null;
   const change = price !== null && prev !== null ? price - prev : null;
   const changePct = change !== null && prev ? (change / prev) * 100 : null;
