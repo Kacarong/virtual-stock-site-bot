@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import useSWR from "swr";
 import { api } from "@/lib/api";
 import { useUsdToKrw } from "@/lib/useUsdToKrw";
@@ -122,6 +122,41 @@ function Spark({ data }: { data: number[] }) {
         strokeLinejoin="round"
       />
     </svg>
+  );
+}
+
+// 가격(trigger) 변동 시 등락률 셀에 상승=빨강/하락=파랑 배경 플래시.
+function PctFlash({
+  trigger,
+  text,
+  colorClass,
+}: {
+  trigger: number | null | undefined;
+  text: string;
+  colorClass: string;
+}) {
+  const prev = useRef<number | null | undefined>(trigger);
+  const [dir, setDir] = useState<"" | "up" | "down">("");
+  const [n, setN] = useState(0);
+  useEffect(() => {
+    const p = prev.current;
+    if (p != null && trigger != null && trigger !== p) {
+      setDir(trigger > p ? "up" : "down");
+      setN((x) => x + 1);
+    }
+    prev.current = trigger;
+  }, [trigger]);
+  return (
+    <div className="text-right">
+      <span
+        key={n}
+        className={`inline-block rounded px-1.5 py-0.5 font-medium ${colorClass} ${
+          dir === "up" ? "flash-up" : dir === "down" ? "flash-down" : ""
+        }`}
+      >
+        {text}
+      </span>
+    </div>
   );
 }
 
@@ -389,7 +424,11 @@ export function LiveDashboard() {
               <div className="text-right font-medium text-ink-1">
                 {fmtPriceCell(dispRow, showKrw, rate)}
               </div>
-              <div className={`text-right font-medium ${p.c}`}>{p.t}</div>
+              <PctFlash
+                trigger={dispRow.price ?? null}
+                text={p.t}
+                colorClass={p.c}
+              />
               <div className="hidden text-right text-ink-3 sm:block">
                 {fmtCompact(row.value)}
               </div>

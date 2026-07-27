@@ -29,6 +29,30 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* 가격/등락 변동 플래시 (빨강=상승, 파랑=하락, 부드럽게 사라짐) */
+@keyframes flash-up {
+  0% {
+    background-color: rgba(255, 77, 77, 0.5);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+@keyframes flash-down {
+  0% {
+    background-color: rgba(49, 130, 246, 0.5);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+.flash-up {
+  animation: flash-up 0.9s ease-out;
+}
+.flash-down {
+  animation: flash-down 0.9s ease-out;
+}
+
 /* 얇고 테마에 녹아드는 스크롤바 */
 .thin-scroll {
   scrollbar-width: thin;
