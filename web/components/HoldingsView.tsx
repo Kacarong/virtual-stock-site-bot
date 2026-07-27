@@ -142,7 +142,7 @@ function RealizedCard() {
           ) : !data?.items.length ? (
             <p className="text-xs text-ink-3">기록이 없습니다.</p>
           ) : (
-            <ul className="max-h-64 divide-y divide-bg-3 overflow-y-auto rounded-xl border border-bg-3">
+            <ul className="thin-scroll max-h-64 divide-y divide-bg-3 overflow-y-auto rounded-xl border border-bg-3">
               {data.items.map((it) => {
                 const n = Number(it.realized_krw);
                 return (

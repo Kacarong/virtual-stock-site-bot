@@ -83,7 +83,7 @@ export function IndustryBoard() {
       ) : (
         <>
           {/* 카테고리 탭 */}
-          <div className="flex gap-1 overflow-x-auto border-b border-bg-3 px-4 py-3">
+          <div className="thin-scroll flex gap-1 overflow-x-auto border-b border-bg-3 px-4 py-3">
             {groups.map((g) => (
               <button
                 key={g.key}
