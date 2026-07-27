@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import useSWR from "swr";
-import { api } from "@/lib/api";
+import { api, fmtSmart } from "@/lib/api";
 import { useUsdToKrw } from "@/lib/useUsdToKrw";
 
 type Row = {
@@ -88,8 +88,9 @@ function fmtPriceCell(
     row.market === "NASDAQ" || row.market === "NYSE" || row.market === "AMEX";
   if (isUS && showKrw && rate)
     return Math.round(n * rate).toLocaleString() + "원";
-  if (row.market === "KRX" || row.market === "UPBIT")
-    return Math.round(n).toLocaleString() + "원";
+  // 코인은 1원 미만 소액도 소수점까지 표시 (가격대별 자동)
+  if (row.market === "UPBIT") return fmtSmart(n) + "원";
+  if (row.market === "KRX") return Math.round(n).toLocaleString() + "원";
   return "$" + n.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
 
