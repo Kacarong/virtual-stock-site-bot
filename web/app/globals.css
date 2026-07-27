@@ -47,10 +47,10 @@ body {
   }
 }
 .flash-up {
-  animation: flash-up 0.9s ease-out;
+  animation: flash-up 1.3s ease-out;
 }
 .flash-down {
-  animation: flash-down 0.9s ease-out;
+  animation: flash-down 1.3s ease-out;
 }
 
 /* 얇고 테마에 녹아드는 스크롤바 */

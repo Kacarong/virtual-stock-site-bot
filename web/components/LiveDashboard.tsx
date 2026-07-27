@@ -125,34 +125,39 @@ function Spark({ data }: { data: number[] }) {
   );
 }
 
-// 가격(trigger) 변동 시 등락률 셀에 상승=빨강/하락=파랑 배경 플래시.
+// 가격(trigger) 변동 시 등락률 셀에 배경 플래시. 색은 틱 방향이 아니라
+// 현재 등락률 부호(양수=빨강, 음수=파랑)를 따른다.
 function PctFlash({
   trigger,
+  changePct,
   text,
   colorClass,
 }: {
   trigger: number | null | undefined;
+  changePct: number | null | undefined;
   text: string;
   colorClass: string;
 }) {
   const prev = useRef<number | null | undefined>(trigger);
-  const [dir, setDir] = useState<"" | "up" | "down">("");
   const [n, setN] = useState(0);
   useEffect(() => {
     const p = prev.current;
     if (p != null && trigger != null && trigger !== p) {
-      setDir(trigger > p ? "up" : "down");
       setN((x) => x + 1);
     }
     prev.current = trigger;
   }, [trigger]);
+  const flashClass =
+    n === 0
+      ? ""
+      : changePct != null && changePct < 0
+      ? "flash-down"
+      : "flash-up";
   return (
     <div className="text-right">
       <span
         key={n}
-        className={`inline-block rounded px-1.5 py-0.5 font-medium ${colorClass} ${
-          dir === "up" ? "flash-up" : dir === "down" ? "flash-down" : ""
-        }`}
+        className={`inline-block rounded px-1.5 py-0.5 font-medium ${colorClass} ${flashClass}`}
       >
         {text}
       </span>
@@ -426,6 +431,7 @@ export function LiveDashboard() {
               </div>
               <PctFlash
                 trigger={dispRow.price ?? null}
+                changePct={lv ? lv.change_pct : row.change_pct}
                 text={p.t}
                 colorClass={p.c}
               />
