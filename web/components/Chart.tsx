@@ -5,6 +5,7 @@ import {
   createChart,
   ColorType,
   IChartApi,
+  ISeriesApi,
 } from "lightweight-charts";
 
 type Candle = {
@@ -24,11 +25,27 @@ type Props = {
   unitLabel?: string;
   /** KRW 모드: 정수 + ","; USD 모드: 소수점 2자리. 기본 auto */
   integerOnly?: boolean;
+  /** 실시간 현재가(원 통화 기준, priceScale 적용 전). 마지막 봉을 실시간 갱신. */
+  livePrice?: number;
 };
 
-export function Chart({ data, priceScale = 1, unitLabel, integerOnly }: Props) {
+export function Chart({
+  data,
+  priceScale = 1,
+  unitLabel,
+  integerOnly,
+  livePrice,
+}: Props) {
   const ref = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
+  const candleRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const lastCandleRef = useRef<{
+    time: any;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+  } | null>(null);
   const [isDark, setIsDark] = useState(false);
 
   // 다크모드 감지 (<html>.dark 클래스) — 토글 시 차트 색도 갱신
@@ -104,15 +121,16 @@ export function Chart({ data, priceScale = 1, unitLabel, integerOnly }: Props) {
       wickDownColor: "#3182F6",
       borderVisible: false,
     });
-    candle.setData(
-      clean.map((d) => ({
-        time: d.time as any,
-        open: d.open * priceScale,
-        high: d.high * priceScale,
-        low: d.low * priceScale,
-        close: d.close * priceScale,
-      })) as any
-    );
+    const scaled = clean.map((d) => ({
+      time: d.time as any,
+      open: d.open * priceScale,
+      high: d.high * priceScale,
+      low: d.low * priceScale,
+      close: d.close * priceScale,
+    }));
+    candle.setData(scaled as any);
+    candleRef.current = candle;
+    lastCandleRef.current = scaled.length ? scaled[scaled.length - 1] : null;
 
     // 거래량 막대 (오버레이 — 화면 하단 25% 차지)
     const hasVolume = clean.some((d) => isNum(d.volume) && (d.volume as number) > 0);
@@ -139,8 +157,29 @@ export function Chart({ data, priceScale = 1, unitLabel, integerOnly }: Props) {
     return () => {
       chart.remove();
       chartRef.current = null;
+      candleRef.current = null;
     };
   }, [data, priceScale, unitLabel, integerOnly, isDark]);
+
+  // 실시간 현재가로 마지막 봉 갱신 (전체 재생성 없이 update만)
+  useEffect(() => {
+    if (livePrice == null || !isFinite(livePrice)) return;
+    const c = candleRef.current;
+    const last = lastCandleRef.current;
+    if (!c || !last) return;
+    const p = livePrice * priceScale;
+    const updated = {
+      time: last.time,
+      open: last.open,
+      high: Math.max(last.high, p),
+      low: Math.min(last.low, p),
+      close: p,
+    };
+    try {
+      c.update(updated as any);
+      lastCandleRef.current = updated;
+    } catch {}
+  }, [livePrice, priceScale]);
 
   return <div ref={ref} className="h-[420px] w-full" />;
 }

@@ -325,6 +325,7 @@ export default function SymbolPage({
               integerOnly={
                 market === "KRX" || (isUS && showKrw && !!rate)
               }
+              livePrice={price ?? undefined}
             />
           ) : (
             <div className="grid h-[360px] place-items-center text-sm text-ink-3">
