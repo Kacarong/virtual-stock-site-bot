@@ -35,9 +35,8 @@ Sort = Literal[
 Market = Literal["KRX", "US", "UPBIT"]
 
 _cache: dict[tuple[str, str], tuple[float, list[dict]]] = {}
-# 가격 실시간 체감을 위해 짧게 (프론트 5초 폴링 + stale-while-revalidate).
-# 폴링(5s)보다 살짝 짧게 둬서 매 폴링마다 새 값이 오도록.
-_TTL = {"UPBIT": 4.0, "KRX": 4.0, "US": 4.0}
+# 가격 실시간 체감을 위해 짧게 (프론트 2초 폴링 + stale-while-revalidate).
+_TTL = {"UPBIT": 2.0, "KRX": 2.0, "US": 2.0}
 
 # 동시 호출 시 중복 fetch 방지용 in-flight 락 (느린 KRX/US용)
 _inflight: dict[str, asyncio.Lock] = {}

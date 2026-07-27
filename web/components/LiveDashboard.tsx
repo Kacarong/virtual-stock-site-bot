@@ -202,7 +202,7 @@ export function LiveDashboard() {
     fetcher,
     {
       refreshInterval: (latest) =>
-        !latest || latest.length === 0 ? 4000 : 5000,
+        !latest || latest.length === 0 ? 2000 : 2000,
       keepPreviousData: true,
     }
   );
