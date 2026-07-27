@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { MyInvestmentPanel } from "@/components/MyInvestmentPanel";
 import { Nav } from "@/components/Nav";
 import { SwrProvider } from "@/components/SwrProvider";
+import { TradeAnnouncer } from "@/components/TradeAnnouncer";
 
 export const metadata: Metadata = {
   title: "papertrade",
@@ -22,6 +23,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body className="min-h-screen bg-bg-2 font-sans text-ink-1">
         <SwrProvider>
+          <TradeAnnouncer />
           <Nav />
           <div className="flex w-full gap-6 px-6 py-6">
             <main className="min-w-0 flex-1">{children}</main>
