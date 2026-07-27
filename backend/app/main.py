@@ -118,6 +118,20 @@ async def on_startup() -> None:
 
     _aio.create_task(_warmup())
 
+    # 장 운영 세션(정규장·애프터마켓·데이마켓·프리마켓)을 주기적으로 갱신 —
+    # 매매 엔진/폴러가 동기로 캐시를 읽어 거래가능 여부를 판단한다.
+    async def _session_loop() -> None:
+        from .services.market_calendar import refresh_sessions as _rs
+
+        while True:
+            try:
+                await _aio.gather(_rs("KR"), _rs("US"), return_exceptions=True)
+            except Exception as e:
+                logger.debug("session loop failed: {}", e)
+            await _aio.sleep(600)
+
+    _aio.create_task(_session_loop())
+
 
 @app.get("/")
 def root() -> dict:

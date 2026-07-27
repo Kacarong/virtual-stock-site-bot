@@ -26,6 +26,66 @@ HOURS = {
     "NYSE":   (time(9, 30), time(16, 0),  NY),
 }
 
+# --- Toss 장 운영 세션 (정규장/애프터마켓/데이마켓/프리마켓) ----------
+_SESSION_LABEL = {
+    "dayMarket": "데이마켓",
+    "preMarket": "프리마켓",
+    "regularMarket": "정규장",
+    "afterMarket": "애프터마켓",
+}
+# country('KR'|'US') → (KST 날짜, {key: (start_dt, end_dt)})
+_session_cache: dict[str, tuple[str, dict]] = {}
+
+
+def _country_for(market: str) -> str | None:
+    if market == "KRX":
+        return "KR"
+    if market in ("NASDAQ", "NYSE", "AMEX"):
+        return "US"
+    return None
+
+
+def _today_kst_str() -> str:
+    return datetime.now(tz=KST).strftime("%Y-%m-%d")
+
+
+async def refresh_sessions(country: str) -> None:
+    """Toss에서 오늘 장 운영 세션을 받아 캐시. (하루 단위로 바뀌므로 주기적으로 호출)"""
+    from .sources import toss as _toss
+
+    try:
+        sess = await _toss.fetch_market_sessions(country)
+        if sess:
+            _session_cache[country] = (_today_kst_str(), sess)
+    except Exception as e:
+        logger.debug("session refresh {} failed: {}", country, e)
+
+
+def _sessions_today(country: str) -> dict | None:
+    e = _session_cache.get(country)
+    if e and e[0] == _today_kst_str():
+        return e[1]
+    return None
+
+
+def market_session(market: str, now: datetime | None = None) -> str | None:
+    """현재 세션 라벨. 'UPBIT'→'24시간', 세션 중이면 라벨, 장마감이면 '장마감',
+    Toss 세션 데이터가 없으면 None(호출측이 폴백)."""
+    if market == "UPBIT":
+        return "24시간"
+    country = _country_for(market)
+    if not country:
+        return None
+    sess = _sessions_today(country)
+    if sess is None:
+        return None  # 데이터 없음 → 폴백
+    now = now or datetime.now(tz=KST)
+    for key in ("regularMarket", "dayMarket", "preMarket", "afterMarket"):
+        rng = sess.get(key)
+        if rng and rng[0] <= now <= rng[1]:
+            return _SESSION_LABEL[key]
+    return "장마감"
+
 
 # --- 휴장일 ----------------------------------------------------------
 
@@ -96,9 +156,17 @@ def is_trading_day(market: str, day: datetime) -> bool:
 
 
 def is_market_open(market: str, now: datetime | None = None) -> bool:
-    """현재 정규장 운영 중인지."""
+    """거래 가능 시간인지. Toss 세션(정규장·애프터마켓·데이마켓·프리마켓) 기준.
+
+    Toss 세션 데이터가 있으면 그 중 아무 세션에 속하면 거래가능으로 본다.
+    데이터가 없으면 기존 하드코딩 정규장 시간으로 폴백.
+    """
     if market == "UPBIT":
         return True
+    label = market_session(market, now)
+    if label is not None:
+        return label != "장마감"
+    # 폴백: 기존 정규장 하드코딩
     if market not in HOURS:
         return False
     open_t, close_t, tz = HOURS[market]

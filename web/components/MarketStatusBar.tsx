@@ -4,7 +4,11 @@ import useSWR from "swr";
 import { api } from "@/lib/api";
 
 type Status = {
-  [m: string]: { open: boolean; next_open: string | null };
+  [m: string]: {
+    open: boolean;
+    next_open: string | null;
+    session?: string | null;
+  };
 };
 
 const fetcher = (u: string) => api(u);
@@ -24,6 +28,7 @@ export function MarketStatusBar() {
     <div className="flex flex-wrap gap-2 rounded-2xl bg-bg-1 px-4 py-2 shadow-sm">
       {LABELS.map((m) => {
         const open = data?.[m.key]?.open ?? (m.key === "UPBIT");
+        const session = data?.[m.key]?.session;
         return (
           <span
             key={m.key}
@@ -40,7 +45,7 @@ export function MarketStatusBar() {
             }
           >
             <span>{open ? "●" : "○"}</span>
-            {m.label} {open ? "거래가능" : "거래불가"}
+            {m.label} {session || (open ? "거래가능" : "거래불가")}
           </span>
         );
       })}

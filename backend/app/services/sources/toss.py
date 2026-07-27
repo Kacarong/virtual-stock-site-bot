@@ -466,6 +466,50 @@ async def fetch_trades(code: str, count: int = 30) -> list[dict]:
     return out
 
 
+# --- 장 운영 세션 ---------------------------------------------------
+
+_US_ET = ZoneInfo("America/New_York")
+
+
+def _parse_dt(s: str | None, default_tz: ZoneInfo) -> datetime | None:
+    if not s:
+        return None
+    try:
+        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
+    except Exception:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=default_tz)
+    return dt
+
+
+async def fetch_market_sessions(country: str) -> dict[str, tuple[datetime, datetime]]:
+    """오늘 장 운영 세션. country='KR'|'US'.
+
+    반환: {'dayMarket'|'preMarket'|'regularMarket'|'afterMarket': (시작, 종료)} (tz-aware).
+    """
+    if not _configured():
+        return {}
+    res = await _authed_get(f"/api/v1/market-calendar/{country}", {})
+    if not res:
+        return {}
+    today = res.get("today") or {}
+    node = today.get("integrated") if country == "KR" else today
+    if not node:
+        return {}
+    tz = _KST if country == "KR" else _US_ET
+    out: dict[str, tuple[datetime, datetime]] = {}
+    for key in ("dayMarket", "preMarket", "regularMarket", "afterMarket"):
+        sess = node.get(key)
+        if not sess:
+            continue
+        st = _parse_dt(sess.get("startTime"), tz)
+        et = _parse_dt(sess.get("endTime"), tz)
+        if st and et:
+            out[key] = (st, et)
+    return out
+
+
 # --- 환율 -----------------------------------------------------------
 
 async def fetch_usdkrw() -> Decimal | None:

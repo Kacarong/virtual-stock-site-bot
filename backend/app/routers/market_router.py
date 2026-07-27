@@ -370,15 +370,21 @@ async def quote(market: str, code: str, db: Session = Depends(get_db)) -> dict:
 
 
 @router.get("/status")
-def status() -> dict:
-    """시장별 개장 여부 + 운영 시간 (현지 + 한국 시간 환산)."""
+async def status() -> dict:
+    """시장별 세션(정규장·애프터마켓·데이마켓·프리마켓) + 개장 여부 + 운영시간."""
     from datetime import datetime
-    from ..services.market_calendar import HOURS, KST
+    from ..services.market_calendar import HOURS, KST, market_session, refresh_sessions
+
+    # Toss 세션을 최신화 (하루 단위지만 날짜 롤오버/장중 갱신 대비)
+    await asyncio.gather(
+        refresh_sessions("KR"), refresh_sessions("US"), return_exceptions=True
+    )
 
     out = {}
     for m in ("KRX", "NASDAQ", "NYSE", "UPBIT"):
         info: dict = {
             "open": is_market_open(m),
+            "session": market_session(m),  # 데이마켓/프리마켓/정규장/애프터마켓/장마감/24시간
             "next_open": next_open(m).isoformat() if m != "UPBIT" else None,
         }
         if m == "UPBIT":

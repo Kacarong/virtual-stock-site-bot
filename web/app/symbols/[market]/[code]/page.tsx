@@ -29,7 +29,11 @@ type Candle = {
 };
 
 type MarketStatus = {
-  [m: string]: { open: boolean; next_open: string | null };
+  [m: string]: {
+    open: boolean;
+    next_open: string | null;
+    session?: string | null;
+  };
 };
 
 const fetcher = (u: string) => api(u);
@@ -79,6 +83,7 @@ export default function SymbolPage({
   const sym = hits?.find((h: any) => h.market === market && h.code === code);
   const isOpen = mstatus?.[market]?.open ?? (market === "UPBIT");
   const nextOpen = mstatus?.[market]?.next_open;
+  const session = mstatus?.[market]?.session;
 
   const [side, setSide] = useState<"BUY" | "SELL">("BUY");
   const [orderType, setOrderType] = useState<"MARKET" | "LIMIT" | "SCHEDULED">(
@@ -214,7 +219,7 @@ export default function SymbolPage({
                     : "bg-red-100 text-red-700"
                 }`}
               >
-                {isOpen ? "● 거래가능" : "● 거래불가"}
+                ● {session || (isOpen ? "거래가능" : "거래불가")}
               </span>
               {isUS && rate && (
                 <>
