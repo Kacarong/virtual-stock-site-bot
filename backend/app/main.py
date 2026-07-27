@@ -140,6 +140,14 @@ async def on_startup() -> None:
 
     _aio.create_task(_session_loop())
 
+    # 코인 실시간 웹소켓 (Upbit) — SSE로 브라우저에 스트리밍
+    try:
+        from .services.upbit_ws import run_upbit_ws
+
+        _aio.create_task(run_upbit_ws())
+    except Exception as e:
+        logger.warning("upbit ws start failed: {}", e)
+
 
 @app.get("/")
 def root() -> dict:

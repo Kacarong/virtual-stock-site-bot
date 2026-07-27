@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import useSWR from "swr";
 import { api } from "@/lib/api";
 import { useUsdToKrw } from "@/lib/useUsdToKrw";
@@ -193,6 +193,25 @@ export function LiveDashboard() {
   );
   const rate = fx?.usdkrw ? Number(fx.usdkrw) : null;
 
+  // 코인 실시간 스트림 (SSE) — 코인 탭에서만 구독, code→{price,change_pct} 덮어쓰기
+  const [live, setLive] = useState<
+    Record<string, { price: number; change_pct: number }>
+  >({});
+  useEffect(() => {
+    if (market !== "UPBIT") {
+      setLive({});
+      return;
+    }
+    const es = new EventSource("/api/market/stream/coin");
+    es.onmessage = (e) => {
+      try {
+        const d = JSON.parse(e.data);
+        setLive((prev) => ({ ...prev, ...d }));
+      } catch {}
+    };
+    return () => es.close();
+  }, [market]);
+
   const sortsForMarket = SORTS.filter(
     (s) => !(market === "UPBIT" && NON_UPBIT_SORTS.includes(s.key))
   );
@@ -336,7 +355,10 @@ export function LiveDashboard() {
         )}
 
         {rows.map((row, i) => {
-          const p = pctText(row.change_pct);
+          // 코인은 실시간 스트림(live) 값으로 현재가/등락률 덮어쓰기
+          const lv = isUpbit ? live[row.code] : undefined;
+          const dispRow = lv ? { ...row, price: lv.price } : row;
+          const p = pctText(lv ? lv.change_pct : row.change_pct);
           return (
             <Link
               key={`${row.market}-${row.code}`}
@@ -365,7 +387,7 @@ export function LiveDashboard() {
                 </div>
               </div>
               <div className="text-right font-medium text-ink-1">
-                {fmtPriceCell(row, showKrw, rate)}
+                {fmtPriceCell(dispRow, showKrw, rate)}
               </div>
               <div className={`text-right font-medium ${p.c}`}>{p.t}</div>
               <div className="hidden text-right text-ink-3 sm:block">

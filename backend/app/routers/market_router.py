@@ -13,6 +13,7 @@ import time
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from loguru import logger
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
@@ -516,6 +517,31 @@ async def orderbook(market: str, code: str) -> dict:
 async def market_trades(market: str, code: str, count: int = 30) -> list[dict]:
     """최근 체결 (Toss)."""
     return await _toss.fetch_trades(code, count)
+
+
+@router.get("/stream/coin")
+async def coin_stream() -> StreamingResponse:
+    """코인 실시간 시세 스트림 (SSE). Upbit 웹소켓 → 변경분 push."""
+    from ..services import upbit_ws as _ws
+
+    q = _ws.subscribe()
+
+    async def gen():
+        try:
+            snap = _ws.all_latest()
+            if snap:
+                yield f"data: {json.dumps(snap)}\n\n"
+            while True:
+                batch = await q.get()
+                yield f"data: {json.dumps(batch)}\n\n"
+        finally:
+            _ws.unsubscribe(q)
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @router.get("/history/{market}/{code}")
