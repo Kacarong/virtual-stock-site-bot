@@ -487,30 +487,36 @@ def _parse_dt(s: str | None, default_tz: ZoneInfo) -> datetime | None:
     return dt
 
 
-async def fetch_market_sessions(country: str) -> dict[str, tuple[datetime, datetime]]:
-    """오늘 장 운영 세션. country='KR'|'US'.
+async def fetch_market_sessions(
+    country: str,
+) -> list[tuple[str, datetime, datetime]]:
+    """장 운영 세션. country='KR'|'US'.
 
-    반환: {'dayMarket'|'preMarket'|'regularMarket'|'afterMarket': (시작, 종료)} (tz-aware).
+    반환: [(session_key, 시작, 종료)] (tz-aware). 미국 정규장은 KST 자정을 넘겨
+    이어지므로 previousBusinessDay·today·nextBusinessDay 세션을 모두 포함한다.
     """
     if not _configured():
-        return {}
+        return []
     res = await _authed_get(f"/api/v1/market-calendar/{country}", {})
     if not res:
-        return {}
-    today = res.get("today") or {}
-    node = today.get("integrated") if country == "KR" else today
-    if not node:
-        return {}
+        return []
     tz = _KST if country == "KR" else _US_ET
-    out: dict[str, tuple[datetime, datetime]] = {}
-    for key in ("dayMarket", "preMarket", "regularMarket", "afterMarket"):
-        sess = node.get(key)
-        if not sess:
+    out: list[tuple[str, datetime, datetime]] = []
+    for day_key in ("previousBusinessDay", "today", "nextBusinessDay"):
+        day = res.get(day_key)
+        if not day:
             continue
-        st = _parse_dt(sess.get("startTime"), tz)
-        et = _parse_dt(sess.get("endTime"), tz)
-        if st and et:
-            out[key] = (st, et)
+        node = day.get("integrated") if country == "KR" else day
+        if not node:
+            continue
+        for key in ("dayMarket", "preMarket", "regularMarket", "afterMarket"):
+            sess = node.get(key)
+            if not sess:
+                continue
+            st = _parse_dt(sess.get("startTime"), tz)
+            et = _parse_dt(sess.get("endTime"), tz)
+            if st and et:
+                out.append((key, st, et))
     return out
 
 

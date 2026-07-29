@@ -33,8 +33,14 @@ _SESSION_LABEL = {
     "regularMarket": "정규장",
     "afterMarket": "애프터마켓",
 }
-# country('KR'|'US') → (KST 날짜, {key: (start_dt, end_dt)})
-_session_cache: dict[str, tuple[str, dict]] = {}
+_SESSION_PRIORITY = {
+    "regularMarket": 0,
+    "dayMarket": 1,
+    "preMarket": 2,
+    "afterMarket": 3,
+}
+# country('KR'|'US') → (KST 날짜, [(key, start_dt, end_dt)])
+_session_cache: dict[str, tuple[str, list]] = {}
 
 
 def _country_for(market: str) -> str | None:
@@ -61,7 +67,7 @@ async def refresh_sessions(country: str) -> None:
         logger.debug("session refresh {} failed: {}", country, e)
 
 
-def _sessions_today(country: str) -> dict | None:
+def _sessions_today(country: str) -> list | None:
     e = _session_cache.get(country)
     if e and e[0] == _today_kst_str():
         return e[1]
@@ -76,15 +82,15 @@ def market_session(market: str, now: datetime | None = None) -> str | None:
     country = _country_for(market)
     if not country:
         return None
-    sess = _sessions_today(country)
-    if sess is None:
+    sessions = _sessions_today(country)
+    if not sessions:
         return None  # 데이터 없음 → 폴백
     now = now or datetime.now(tz=KST)
-    for key in ("regularMarket", "dayMarket", "preMarket", "afterMarket"):
-        rng = sess.get(key)
-        if rng and rng[0] <= now <= rng[1]:
-            return _SESSION_LABEL[key]
-    return "장마감"
+    matches = [k for (k, st, et) in sessions if st <= now <= et]
+    if not matches:
+        return "장마감"
+    best = min(matches, key=lambda k: _SESSION_PRIORITY.get(k, 9))
+    return _SESSION_LABEL[best]
 
 
 # --- 휴장일 ----------------------------------------------------------
