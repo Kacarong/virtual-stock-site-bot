@@ -42,6 +42,16 @@ _STALE_TTL = 24 * 3600.0
 # (market, code, interval) → (ts, rows)
 _hist_cache: dict[tuple[str, str, str], tuple[float, list[dict]]] = {}
 _hist_inflight: dict[tuple[str, str, str], asyncio.Task] = {}
+# 히스토리(캔들 리스트)는 항목이 크므로 상한을 두고 오래된 것부터 제거
+_MAX_HIST_CACHE = 800
+
+
+def _store_hist(key: tuple[str, str, str], now: float, rows: list[dict]) -> None:
+    _hist_cache[key] = (now, rows)
+    if len(_hist_cache) > _MAX_HIST_CACHE:
+        overflow = len(_hist_cache) - _MAX_HIST_CACHE
+        for k, _ in sorted(_hist_cache.items(), key=lambda kv: kv[1][0])[:overflow]:
+            _hist_cache.pop(k, None)
 
 
 def _aggregate(daily: list[dict], unit: str) -> list[dict]:
@@ -313,7 +323,7 @@ def _spawn_hist_refresh(market: str, code: str, interval: Interval) -> None:
         try:
             rows = await _fetch_history_uncached(market, code, interval)
             if rows:
-                _hist_cache[key] = (time.time(), rows)
+                _store_hist(key, time.time(), rows)
         except Exception as e:
             logger.warning("history refresh failed {} {} {}: {}", market, code, interval, e)
         finally:
@@ -357,5 +367,5 @@ async def get_history(
         return cached[1] if cached else []
 
     if rows:
-        _hist_cache[key] = (now, rows)
+        _store_hist(key, now, rows)
     return rows or (cached[1] if cached else [])

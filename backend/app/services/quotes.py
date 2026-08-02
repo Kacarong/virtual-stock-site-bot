@@ -21,6 +21,17 @@ from .sources import kis, stooq, toss, upbit, yfinance_src
 _ondemand_cache: dict[tuple[str, str], tuple[float, dict]] = {}
 CACHE_TTL = 30.0  # 초 (이 시간 안이면 캐시 그대로)
 STALE_TTL = 600.0  # 초 (이 시간 안이면 stale-while-revalidate)
+# 장시간 구동 시 캐시가 무한정 커져 메모리/조회가 느려지지 않도록 상한(오래된 것부터 제거)
+_MAX_CACHE = 3000
+
+
+def _evict_ondemand() -> None:
+    if len(_ondemand_cache) <= _MAX_CACHE:
+        return
+    # ts 오래된 순으로 초과분 제거
+    overflow = len(_ondemand_cache) - _MAX_CACHE
+    for key, _ in sorted(_ondemand_cache.items(), key=lambda kv: kv[1][0])[:overflow]:
+        _ondemand_cache.pop(key, None)
 
 # 동일 종목 동시 호출 dedup
 _inflight: dict[tuple[str, str], asyncio.Task] = {}
@@ -89,6 +100,7 @@ async def _fetch_and_store(market: str, code: str) -> dict | None:
         return None
     if q:
         _ondemand_cache[(market, code)] = (time.time(), q)
+        _evict_ondemand()
     return q
 
 

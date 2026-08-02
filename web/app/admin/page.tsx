@@ -14,8 +14,52 @@ export default function Admin() {
   const [memo, setMemo] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
 
+  // 지원금 지급 폼
+  const [grantTitle, setGrantTitle] = useState("");
+  const [grantMsg, setGrantMsg] = useState("");
+  const [grantAmount, setGrantAmount] = useState("");
+  const [granting, setGranting] = useState(false);
+
   if (error?.message?.includes("403")) {
     return <div className="p-8 text-center text-sm text-red-600">관리자 권한 필요</div>;
+  }
+
+  async function grant() {
+    if (!grantTitle.trim() || !Number(grantAmount)) {
+      setMsg("지원금 제목과 금액을 입력하세요.");
+      return;
+    }
+    if (
+      !confirm(
+        `모든 유저에게 ${Number(grantAmount).toLocaleString()}원 지원금을 지급할까요?`
+      )
+    )
+      return;
+    setGranting(true);
+    setMsg(null);
+    try {
+      const r = await api<any>("/support/grant", {
+        method: "POST",
+        body: JSON.stringify({
+          title: grantTitle.trim(),
+          message: grantMsg.trim() || null,
+          amount_krw: grantAmount,
+        }),
+      });
+      setMsg(
+        `지원금 지급 완료: ${r.granted_count}명에게 ${Number(
+          r.amount_krw
+        ).toLocaleString()}원`
+      );
+      setGrantTitle("");
+      setGrantMsg("");
+      setGrantAmount("");
+      mutate();
+    } catch (e: any) {
+      setMsg(e.message);
+    } finally {
+      setGranting(false);
+    }
   }
 
   async function adjust() {
@@ -66,6 +110,44 @@ export default function Admin() {
       {msg && (
         <div className="rounded-xl bg-bg-2 p-3 text-sm text-ink-2">{msg}</div>
       )}
+
+      {/* 지원금 지급 — 모든 유저에게 현금 + 입장 알림 */}
+      <div className="rounded-2xl bg-bg-1 p-6 shadow-sm">
+        <h2 className="font-semibold">🎁 전체 유저 지원금 지급</h2>
+        <p className="mt-1 text-xs text-ink-3">
+          모든 유저에게 원화 지원금을 지급하고, 각 유저 입장 시 알림을 띄웁니다.
+          유저는 알림을 끌 수 있고, 수익 탭에 &quot;지원금&quot;으로 표기됩니다.
+        </p>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <input
+            value={grantTitle}
+            onChange={(e) => setGrantTitle(e.target.value)}
+            placeholder="알림 제목 (예: 여름 이벤트 지원금)"
+            className="rounded-xl border border-bg-3 bg-bg-1 px-3 py-2 text-sm"
+          />
+          <input
+            value={grantAmount}
+            onChange={(e) => setGrantAmount(e.target.value)}
+            placeholder="지급 금액 (원)"
+            inputMode="numeric"
+            className="rounded-xl border border-bg-3 bg-bg-1 px-3 py-2 text-sm"
+          />
+        </div>
+        <textarea
+          value={grantMsg}
+          onChange={(e) => setGrantMsg(e.target.value)}
+          placeholder="알림 설명 (선택) — 유저에게 보여줄 안내 문구"
+          rows={2}
+          className="mt-3 w-full rounded-xl border border-bg-3 bg-bg-1 px-3 py-2 text-sm"
+        />
+        <button
+          onClick={grant}
+          disabled={granting}
+          className="mt-3 rounded-xl bg-brand px-4 py-2 text-sm font-semibold text-brand-fg disabled:opacity-50"
+        >
+          {granting ? "지급 중…" : "전체 유저에게 지원금 지급"}
+        </button>
+      </div>
 
       <div className="overflow-hidden rounded-2xl bg-bg-1 shadow-sm">
         <table className="w-full text-sm">

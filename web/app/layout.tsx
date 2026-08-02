@@ -3,6 +3,7 @@ import type { Metadata } from "next";
 import { Footer } from "@/components/Footer";
 import { MyInvestmentPanel } from "@/components/MyInvestmentPanel";
 import { Nav } from "@/components/Nav";
+import { SupportNotifications } from "@/components/SupportNotifications";
 import { SwrProvider } from "@/components/SwrProvider";
 import { TradeAnnouncer } from "@/components/TradeAnnouncer";
 
@@ -25,6 +26,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="min-h-screen bg-bg-2 font-sans text-ink-1">
         <SwrProvider>
           <TradeAnnouncer />
+          <SupportNotifications />
           <Nav />
           <div className="flex w-full gap-6 px-6 py-6">
             <main className="min-w-0 flex-1">{children}</main>

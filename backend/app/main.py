@@ -14,6 +14,7 @@ from .routers import (
     market_router,
     orders_router,
     portfolio_router,
+    support_router,
     watchlist_router,
 )
 
@@ -34,6 +35,7 @@ app.include_router(watchlist_router.router)
 app.include_router(orders_router.router)
 app.include_router(portfolio_router.router)
 app.include_router(admin_router.router)
+app.include_router(support_router.router)
 
 
 @app.on_event("startup")

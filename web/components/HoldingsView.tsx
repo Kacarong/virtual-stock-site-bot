@@ -99,6 +99,12 @@ function RealizedCard() {
     fetcher,
     { refreshInterval: 30000 }
   );
+  const { data: support } = useSWR<{ total_support_krw: string }>(
+    "/support/summary",
+    fetcher,
+    { refreshInterval: 30000 }
+  );
+  const supportTotal = support ? Number(support.total_support_krw) : 0;
 
   const total = data ? Number(data.total_krw) : 0;
   return (
@@ -134,6 +140,15 @@ function RealizedCard() {
       <p className="text-[11px] text-ink-3">
         매도 시점에 확정된 손익 누계 (원화 환산)
       </p>
+
+      {supportTotal > 0 && (
+        <div className="mt-3 flex items-center justify-between rounded-xl bg-brand/10 px-3 py-2">
+          <span className="text-xs font-semibold text-brand">🎁 지원금</span>
+          <span className="text-sm font-bold text-brand">
+            +{fmtKRW(supportTotal)}
+          </span>
+        </div>
+      )}
 
       {period !== "all" && (
         <div className="mt-4">

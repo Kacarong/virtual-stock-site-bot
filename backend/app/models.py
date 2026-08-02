@@ -181,6 +181,40 @@ class MarketCalendar(Base):
     close_time: Mapped[str | None] = mapped_column(String(5), nullable=True)
 
 
+class SupportGrant(Base):
+    """관리자 지원금 지급 공지 (모든 유저에게 1회 현금 지급 + 알림)."""
+
+    __tablename__ = "support_grants"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    title: Mapped[str] = mapped_column(String(200))
+    message: Mapped[str | None] = mapped_column(String(1000), nullable=True)
+    amount_krw: Mapped[Decimal] = mapped_column(MONEY, default=Decimal("0"))
+    created_by: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 지급한 관리자 user_id
+    granted_count: Mapped[int] = mapped_column(Integer, default=0)  # 지급 대상 유저 수
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), index=True
+    )
+
+
+class SupportGrantDismissal(Base):
+    """유저가 지원금 알림을 끈(닫은) 기록."""
+
+    __tablename__ = "support_grant_dismissals"
+    __table_args__ = (
+        UniqueConstraint("user_id", "grant_id", name="uq_dismiss_user_grant"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), index=True
+    )
+    grant_id: Mapped[int] = mapped_column(
+        ForeignKey("support_grants.id", ondelete="CASCADE"), index=True
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 Index("ix_price_ts", Price.ts)
 Index("ix_order_status_type", Order.status, Order.order_type)
 # 검색·자동분류에서 자주 쓰임 (is_active 필터링)
