@@ -431,6 +431,7 @@ export function LiveDashboard() {
                 {fmtPriceCell(dispRow, showKrw, rate)}
               </div>
               <PctFlash
+                key={`${market}-${sort}`}
                 trigger={dispRow.price ?? null}
                 changePct={lv ? lv.change_pct : row.change_pct}
                 text={p.t}

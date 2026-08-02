@@ -11,7 +11,7 @@ trigger_scheduled_orders: 예약 주문 트리거 (Worker 1초 틱)
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from loguru import logger
@@ -46,6 +46,88 @@ async def _current_price(sym: Symbol, db: Session) -> Decimal | None:
     return None
 
 
+# --- 매수여력 검증 ----------------------------------------------------
+
+def _pending_price(db: Session, o: Order) -> Decimal | None:
+    """미체결 주문의 예상 체결가 (지정가 우선, 없으면 최신가 캐시)."""
+    if o.limit_price:
+        return o.limit_price
+    p = db.get(Price, o.symbol_id)
+    return p.price if p and p.price else None
+
+
+def _reserved_by_currency(db: Session, user: User) -> tuple[Decimal, Decimal]:
+    """미체결(PENDING) 매수 주문이 예약한 금액을 통화별(KRW, USD)로 합산."""
+    reserved_krw = ZERO
+    reserved_usd = ZERO
+    pend = (
+        db.query(Order)
+        .filter(
+            Order.user_id == user.id,
+            Order.side == "BUY",
+            Order.status == "PENDING",
+        )
+        .all()
+    )
+    for o in pend:
+        ps = db.get(Symbol, o.symbol_id)
+        if not ps:
+            continue
+        pp = _pending_price(db, o)
+        if pp is None:
+            continue
+        cost = calc_cost(market=ps.market, side="BUY", price=pp, qty=o.qty).net
+        if _currency(ps.market) == "USD":
+            reserved_usd += cost
+        else:
+            reserved_krw += cost
+    return reserved_krw, reserved_usd
+
+
+async def _check_buying_power(
+    db: Session,
+    *,
+    user: User,
+    sym: Symbol,
+    order_type: str,
+    qty: Decimal,
+    limit_price: Decimal | None,
+) -> None:
+    """매수 주문이 가용 잔액(미체결 예약분 제외)을 초과하면 즉시 거절.
+
+    결제 로직(_fill)과 동일한 기준:
+    - KRW 종목: cash_krw
+    - USD 종목: cash_usd 우선, 부족분은 cash_krw에서 환전(스프레드 1%)
+    가격을 알 수 없으면(시세 미상) 검증을 건너뛰고 체결 시점 검증에 위임.
+    """
+    if order_type == "LIMIT" and limit_price:
+        price = limit_price
+    else:
+        price = await _current_price(sym, db)
+    if price is None or price <= 0:
+        return
+
+    est = calc_cost(market=sym.market, side="BUY", price=price, qty=qty).net
+    reserved_krw, reserved_usd = _reserved_by_currency(db, user)
+    currency = _currency(sym.market)
+
+    if currency == "KRW":
+        avail = user.cash_krw - reserved_krw
+        if est > avail:
+            raise OrderError("insufficient cash")
+    else:  # USD
+        avail_usd = user.cash_usd - reserved_usd
+        if est <= avail_usd:
+            return
+        shortfall_usd = est - avail_usd
+        rate = await get_usdkrw()
+        krw_needed = quantize_money(
+            shortfall_usd * rate * (Decimal("1") + Decimal("0.01"))
+        )
+        if (user.cash_krw - reserved_krw) < krw_needed:
+            raise OrderError("insufficient KRW for FX")
+
+
 # --- 주문 생성 -------------------------------------------------------
 
 async def place_order(
@@ -71,6 +153,10 @@ async def place_order(
         raise OrderError("limit_price required for LIMIT")
     if order_type == "SCHEDULED" and not scheduled_at:
         raise OrderError("scheduled_at required for SCHEDULED")
+    # 프론트가 next_open(오프셋 포함 ISO)을 보내면 tz-aware datetime이 된다.
+    # naive datetime.utcnow()와 비교하면 TypeError → HTTP 500 → naive UTC로 정규화.
+    if scheduled_at is not None and scheduled_at.tzinfo is not None:
+        scheduled_at = scheduled_at.astimezone(timezone.utc).replace(tzinfo=None)
     if order_type == "SCHEDULED" and scheduled_at <= datetime.utcnow():
         raise OrderError("scheduled_at must be in the future")
 
@@ -87,6 +173,11 @@ async def place_order(
         )
         if not h or h.qty < qty:
             raise OrderError("insufficient holding")
+    else:  # BUY — 주문 시점에 잔액(미체결 예약분 포함) 검증: 보유 금액 이상 주문 방지
+        await _check_buying_power(
+            db, user=user, sym=sym, order_type=order_type,
+            qty=qty, limit_price=limit_price,
+        )
 
     order = Order(
         user_id=user.id,

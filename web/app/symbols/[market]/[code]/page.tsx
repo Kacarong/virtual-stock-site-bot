@@ -6,7 +6,7 @@ import { Chart } from "@/components/Chart";
 import { OrderBook } from "@/components/OrderBook";
 import { RecentTrades } from "@/components/RecentTrades";
 import { FxModal } from "@/components/FxModal";
-import { api, fmtPrice, fmtQty, pctClass } from "@/lib/api";
+import { api, fmtPrice, fmtQty, pctClass, fmtKRW, fmtSmart, fmtNum } from "@/lib/api";
 import { useUsdToKrw } from "@/lib/useUsdToKrw";
 
 type Quote = {
@@ -420,17 +420,22 @@ export default function SymbolPage({
             return q?.price ? Number(q.price) : 0;
           })();
           const isUpbit = market === "UPBIT";
-          // 매수 가능 금액 (해당 종목 통화 기준)
+          // 매수 가능 금액 (해당 종목 결제통화 기준)
           const cashKrw = pf?.cash_krw ? Number(pf.cash_krw) : 0;
           const cashUsd = pf?.cash_usd ? Number(pf.cash_usd) : 0;
-          const buyCash = isUS ? cashUsd : cashKrw;
+          // 미국주식은 USD 현금 + (원화를 환전한 여력)까지 매수여력에 포함 → 원화만 있어도 비율매수 가능
+          const buyCash = isUS
+            ? cashUsd + (rate ? cashKrw / (rate * 1.01) : 0)
+            : cashKrw;
+          // 수수료율(체결 시 gross+fee가 잔액을 넘지 않도록 여유 반영)
+          const feeRate = market === "KRX" ? 0.00015 : isUS ? 0.0025 : isUpbit ? 0.0005 : 0;
           const canBuy = refPrice > 0 && buyCash > 0;
           const canSell = holdingQty > 0;
           const active = side === "BUY" ? canBuy : canSell;
           if (!active) return null;
           const apply = (pct: number) => {
             if (side === "BUY") {
-              const raw = (buyCash * pct) / 100 / refPrice;
+              const raw = (buyCash * pct) / 100 / (refPrice * (1 + feeRate));
               if (!isFinite(raw) || raw <= 0) return;
               setQty(isUpbit ? raw.toFixed(8).replace(/\.?0+$/, "") : String(Math.floor(raw)));
             } else {
@@ -506,6 +511,50 @@ export default function SymbolPage({
             </div>
           )}
         </div>
+
+        {/* 예상 체결가 · 주문금액 — 원화 구분기호(,) + "원" 통일 (해외/코인도 원화 환산) */}
+        {(() => {
+          const refPrice = (() => {
+            if (
+              (orderType === "LIMIT" || orderType === "SCHEDULED") &&
+              limitPrice
+            ) {
+              const lp = Number(limitPrice);
+              if (isFinite(lp) && lp > 0) return lp;
+            }
+            return price ?? (q?.price ? Number(q.price) : 0);
+          })();
+          const qtyNum = Number(qty);
+          if (
+            !isFinite(refPrice) ||
+            refPrice <= 0 ||
+            !isFinite(qtyNum) ||
+            qtyNum <= 0
+          )
+            return null;
+          // 해외주식(USD)은 환율로 원화 환산, 국내/코인은 그대로 원화
+          const unitKrw = isUS && rate ? refPrice * rate : refPrice;
+          const totalKrw = unitKrw * qtyNum;
+          const krwCell = (v: number) =>
+            market === "UPBIT" ? fmtSmart(v) + " 원" : fmtKRW(v);
+          return (
+            <div className="mt-4 space-y-1 rounded-xl bg-bg-2 px-4 py-3 text-xs">
+              <div className="flex justify-between">
+                <span className="text-ink-3">예상 체결가</span>
+                <span className="font-semibold">{krwCell(unitKrw)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-ink-3">예상 주문금액</span>
+                <span className="font-semibold">{krwCell(totalKrw)}</span>
+              </div>
+              {isUS && rate && (
+                <div className="pt-0.5 text-right text-[10px] text-ink-4">
+                  (${fmtNum(refPrice)} · 환율 {fmtKRW(rate)})
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         <button
           onClick={submit}
