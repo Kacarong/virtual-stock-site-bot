@@ -138,6 +138,79 @@ async def ranking(
     return out
 
 
+@router.get("/ranking/{user_id}")
+async def ranking_detail(
+    user_id: int,
+    _user: User = Depends(current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """랭킹에서 특정 유저를 눌렀을 때 보여줄 상세: 보유 종목 + 종목별 평가/손익.
+
+    (다른 유저의 포트폴리오를 열람하는 읽기 전용 — 로그인만 되어 있으면 가능)
+    """
+    target = db.get(User, user_id)
+    if not target:
+        raise HTTPException(404, "user not found")
+    rate = await get_usdkrw()
+
+    holdings = (
+        db.query(Holding, Symbol, Price)
+        .join(Symbol, Symbol.id == Holding.symbol_id)
+        .outerjoin(Price, Price.symbol_id == Symbol.id)
+        .filter(Holding.user_id == user_id, Holding.qty > 0)
+        .all()
+    )
+
+    items = []
+    total_value_krw = Decimal("0")
+    total_cost_krw = Decimal("0")
+    for h, s, p in holdings:
+        cur_price = p.price if p else h.avg_cost
+        value_native = cur_price * h.qty
+        cost_native = h.avg_cost * h.qty
+        pnl_native = value_native - cost_native
+        pnl_pct = (pnl_native / cost_native * 100) if cost_native else Decimal("0")
+        if s.currency == "USD":
+            value_krw = value_native * rate
+            pnl_krw = pnl_native * rate
+        else:
+            value_krw = value_native
+            pnl_krw = pnl_native
+        total_value_krw += value_krw
+        total_cost_krw += (value_krw - pnl_krw)
+        items.append(
+            {
+                "symbol_id": s.id,
+                "code": s.code,
+                "name": s.name,
+                "market": s.market,
+                "currency": s.currency,
+                "qty": str(h.qty),
+                "avg_cost": str(h.avg_cost),
+                "price": str(cur_price),
+                "value_krw": str(value_krw),
+                "pnl_krw": str(pnl_krw),
+                "pnl_pct": f"{pnl_pct:.2f}",
+            }
+        )
+
+    # 평가금 큰 순으로
+    items.sort(key=lambda x: Decimal(x["value_krw"]), reverse=True)
+    total_pnl_krw = total_value_krw - total_cost_krw
+    total_pnl_pct = (
+        (total_pnl_krw / total_cost_krw * 100) if total_cost_krw else Decimal("0")
+    )
+    return {
+        "user_id": target.id,
+        "username": target.username,
+        "avatar_url": target.avatar_url,
+        "holdings_value_krw": str(total_value_krw),
+        "holdings_pnl_krw": str(total_pnl_krw),
+        "holdings_pnl_pct": f"{total_pnl_pct:.2f}",
+        "holdings": items,
+    }
+
+
 @router.get("")
 async def portfolio(
     user: User = Depends(current_user),

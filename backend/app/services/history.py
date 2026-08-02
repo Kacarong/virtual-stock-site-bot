@@ -155,16 +155,20 @@ async def _upbit_history(code: str, interval: Interval) -> list[dict]:
     return _upbit_normalize(rows)
 
 
-async def _race(*coros) -> list[dict]:
-    """여러 소스를 동시에 호출 → 가장 먼저 유효한 결과(빈 리스트 아닌)를 반환.
+async def _race(*coros, min_good: int = 1) -> list[dict]:
+    """여러 소스를 동시에 호출 → 충분히 긴 결과(len >= min_good)가 먼저 오면 즉시 반환.
 
-    실패/빈 결과는 무시하고 다음을 기다림. 모두 실패하면 [].
-    중간에 결과가 오면 나머지는 취소.
+    - min_good 이상 캔들을 준 첫 소스를 채택하고 나머지는 취소.
+    - min_good 미만(예: 당일 1~2봉만 준 소스)만 도착하면 곧장 채택하지 않고
+      다른 소스를 계속 기다린다. 모두 끝나면 그중 가장 긴 결과를 반환.
+    - 이렇게 하면 "빠르지만 당일치만 주는" 소스가 전체 히스토리 소스를 이기지 못한다.
+    실패/빈 결과는 무시. 모두 실패하면 [].
     """
     tasks = [asyncio.ensure_future(c) for c in coros]
+    best: list[dict] = []
     try:
         while tasks:
-            done, pending = await asyncio.wait(
+            done, _pending = await asyncio.wait(
                 tasks, return_when=asyncio.FIRST_COMPLETED
             )
             for d in done:
@@ -173,12 +177,14 @@ async def _race(*coros) -> list[dict]:
                     rows = d.result()
                 except Exception:
                     rows = []
-                if rows:
-                    # 나머지 취소
+                if rows and len(rows) >= min_good:
+                    # 충분한 히스토리 → 나머지 취소하고 채택
                     for p in tasks:
                         p.cancel()
                     return rows
-        return []
+                if rows and len(rows) > len(best):
+                    best = rows  # 짧은 결과는 일단 보관, 더 긴 게 없으면 사용
+        return best
     finally:
         for t in tasks:
             if not t.done():
@@ -191,6 +197,7 @@ async def _krx_history(code: str, interval: Interval) -> list[dict]:
         rows = await _race(
             _kis.fetch_daily_candles(code, count=100),
             _yf_history("KRX", code, "max" if interval == "all" else "5y", "1d"),
+            min_good=20,
         )
         if not rows:
             return []
@@ -199,18 +206,21 @@ async def _krx_history(code: str, interval: Interval) -> list[dict]:
         if interval == "1mo":
             return _aggregate(rows, "M")
         return rows  # all = 일봉 전체
-    # 일/분: KIS와 yfinance 동시 호출 → 먼저 도착하는 거 사용
+    # 일/분: 여러 소스 동시 호출 → 충분한 히스토리를 준 소스 채택
+    # (당일치만 주는 소스가 이겨서 "당일만 표시"되던 문제 방지)
     if interval == "1d":
         return await _race(
             _toss.fetch_candles(code, "1d", count=180),
             _kis.fetch_daily_candles(code, count=180),
             _yf_history("KRX", code, "6mo", "1d"),
+            min_good=20,
         )
     if interval == "1m":
         return await _race(
             _toss.fetch_candles(code, "1m", count=200),
             _kis.fetch_minute_candles(code, count=200),
             _yf_history("KRX", code, "5d", "1m"),
+            min_good=30,
         )
     period_map = {"5m": "5d", "1h": "1mo"}
     yf_interval = {"5m": "5m", "1h": "60m"}[interval]
@@ -224,6 +234,7 @@ async def _us_history(market: str, code: str, interval: Interval) -> list[dict]:
             _kis.fetch_overseas_daily_candles(code, market, count=100),
             _stooq.fetch_history(code, count=2000),
             _yf_history(market, code, "max" if interval == "all" else "5y", "1d"),
+            min_good=20,
         )
         if not rows:
             return []
@@ -232,18 +243,20 @@ async def _us_history(market: str, code: str, interval: Interval) -> list[dict]:
         if interval == "1mo":
             return _aggregate(rows, "M")
         return rows
-    # 1d: Toss + 기존 3개 소스 race
+    # 1d: Toss + 기존 3개 소스 race (당일치만 주는 소스가 이기지 않도록 min_good)
     if interval == "1d":
         return await _race(
             _toss.fetch_candles(code, "1d", count=180),
             _kis.fetch_overseas_daily_candles(code, market, count=180),
             _stooq.fetch_history(code, count=180),
             _yf_history(market, code, "6mo", "1d"),
+            min_good=20,
         )
     if interval == "1m":
         return await _race(
             _toss.fetch_candles(code, "1m", count=200),
             _yf_history(market, code, "5d", "1m"),
+            min_good=30,
         )
     period_map = {"1m": "5d", "5m": "5d", "1h": "1mo"}
     yf_interval = {"1m": "1m", "5m": "5m", "1h": "60m"}[interval]
