@@ -504,19 +504,67 @@ async def indicators() -> list[dict]:
     return [r for r in results if r]
 
 
+# 호가/체결 stale-while-revalidate 캐시 — 첫 로딩만 외부 호출, 이후 폴링·재진입은 즉시.
+_ob_cache: dict[str, tuple[float, dict]] = {}
+_ob_inflight: set[str] = set()
+_tr_cache: dict[str, tuple[float, list]] = {}
+_tr_inflight: set[str] = set()
+_OB_FRESH = 1.2
+_TR_FRESH = 1.5
+
+
+async def _ob_refresh(code: str) -> dict | None:
+    try:
+        ob = await _toss.fetch_orderbook(code)
+    except Exception:
+        ob = None
+    if ob:
+        _ob_cache[code] = (time.time(), ob)
+    _ob_inflight.discard(code)
+    return ob
+
+
 @router.get("/orderbook/{market}/{code}")
 async def orderbook(market: str, code: str) -> dict:
-    """호가 (Toss). 미지원/실패 시 빈 호가."""
-    ob = await _toss.fetch_orderbook(code)
-    n = (len(ob.get("asks", [])) + len(ob.get("bids", []))) if ob else 0
-    logger.info("orderbook diag: market={} code={} levels={}", market, code, n)
+    """호가 (Toss) — stale-while-revalidate. 미지원/실패 시 빈 호가."""
+    now = time.time()
+    c = _ob_cache.get(code)
+    if c and now - c[0] < _OB_FRESH:
+        return c[1]
+    if c:  # stale → 즉시 반환 + 백그라운드 갱신
+        if code not in _ob_inflight:
+            _ob_inflight.add(code)
+            asyncio.create_task(_ob_refresh(code))
+        return c[1]
+    ob = await _ob_refresh(code)
     return ob or {"asks": [], "bids": [], "currency": None}
+
+
+async def _tr_refresh(code: str, count: int) -> list | None:
+    try:
+        tr = await _toss.fetch_trades(code, count)
+    except Exception:
+        tr = None
+    if tr:
+        _tr_cache[code] = (time.time(), tr)
+    _tr_inflight.discard(code)
+    return tr
 
 
 @router.get("/trades/{market}/{code}")
 async def market_trades(market: str, code: str, count: int = 30) -> list[dict]:
-    """최근 체결 (Toss)."""
-    return await _toss.fetch_trades(code, count)
+    """최근 체결 (Toss) — stale-while-revalidate."""
+    now = time.time()
+    c = _tr_cache.get(code)
+    if c and now - c[0] < _TR_FRESH:
+        return c[1]
+    if c:
+        if code not in _tr_inflight:
+            _tr_inflight.add(code)
+            asyncio.create_task(_tr_refresh(code, count))
+        return c[1]
+    tr = await _tr_refresh(code, count)
+    return tr or []
 
 
 @router.get("/stream/coin")

@@ -205,9 +205,9 @@ async def _krx_history(code: str, interval: Interval) -> list[dict]:
     # 주봉/월봉/전체: 일봉 받아서 집계
     if interval in ("1w", "1mo", "all"):
         rows = await _race(
-            _kis.fetch_daily_candles(code, count=100),
+            _kis.fetch_daily_candles(code, count=200),
             _yf_history("KRX", code, "max" if interval == "all" else "5y", "1d"),
-            min_good=20,
+            min_good=250,  # 깊은 소스(yf 5y/max) 우선 — 주/월봉이 충분히 길게
         )
         if not rows:
             return []
@@ -216,23 +216,24 @@ async def _krx_history(code: str, interval: Interval) -> list[dict]:
         if interval == "1mo":
             return _aggregate(rows, "M")
         return rows  # all = 일봉 전체
-    # 일/분: 여러 소스 동시 호출 → 충분한 히스토리를 준 소스 채택
-    # (당일치만 주는 소스가 이겨서 "당일만 표시"되던 문제 방지)
+    # 일/분: 여러 소스 동시 호출 → "더 깊은 히스토리"를 준 소스 채택.
+    # Toss는 200개(일봉≈10개월/분봉≈3시간)에서 캡되므로, min_good을 그 위로 잡아
+    # yfinance(2y/7d)가 이기게 한다. yf 실패 시엔 가장 긴 결과(Toss 200)로 폴백.
     if interval == "1d":
         return await _race(
-            _toss.fetch_candles(code, "1d", count=180),
-            _kis.fetch_daily_candles(code, count=180),
-            _yf_history("KRX", code, "6mo", "1d"),
-            min_good=20,
+            _toss.fetch_candles(code, "1d", count=200),
+            _kis.fetch_daily_candles(code, count=200),
+            _yf_history("KRX", code, "2y", "1d"),
+            min_good=250,
         )
     if interval == "1m":
         return await _race(
             _toss.fetch_candles(code, "1m", count=200),
             _kis.fetch_minute_candles(code, count=200),
-            _yf_history("KRX", code, "5d", "1m"),
-            min_good=30,
+            _yf_history("KRX", code, "7d", "1m"),
+            min_good=400,
         )
-    period_map = {"5m": "5d", "1h": "1mo"}
+    period_map = {"5m": "1mo", "1h": "1y"}
     yf_interval = {"5m": "5m", "1h": "60m"}[interval]
     return await _yf_history("KRX", code, period_map[interval], yf_interval)
 
@@ -241,10 +242,10 @@ async def _us_history(market: str, code: str, interval: Interval) -> list[dict]:
     # 주봉/월봉/전체: 일봉 받아서 집계
     if interval in ("1w", "1mo", "all"):
         rows = await _race(
-            _kis.fetch_overseas_daily_candles(code, market, count=100),
+            _kis.fetch_overseas_daily_candles(code, market, count=200),
             _stooq.fetch_history(code, count=2000),
             _yf_history(market, code, "max" if interval == "all" else "5y", "1d"),
-            min_good=20,
+            min_good=250,  # 깊은 소스(stooq/yf) 우선
         )
         if not rows:
             return []
@@ -253,22 +254,22 @@ async def _us_history(market: str, code: str, interval: Interval) -> list[dict]:
         if interval == "1mo":
             return _aggregate(rows, "M")
         return rows
-    # 1d: Toss + 기존 3개 소스 race (당일치만 주는 소스가 이기지 않도록 min_good)
+    # 1d/1m: Toss(200 캡)보다 깊은 소스(stooq/yf 2y·7d)가 이기도록 min_good을 올림
     if interval == "1d":
         return await _race(
-            _toss.fetch_candles(code, "1d", count=180),
-            _kis.fetch_overseas_daily_candles(code, market, count=180),
-            _stooq.fetch_history(code, count=180),
-            _yf_history(market, code, "6mo", "1d"),
-            min_good=20,
+            _toss.fetch_candles(code, "1d", count=200),
+            _kis.fetch_overseas_daily_candles(code, market, count=200),
+            _stooq.fetch_history(code, count=500),
+            _yf_history(market, code, "2y", "1d"),
+            min_good=250,
         )
     if interval == "1m":
         return await _race(
             _toss.fetch_candles(code, "1m", count=200),
-            _yf_history(market, code, "5d", "1m"),
-            min_good=30,
+            _yf_history(market, code, "7d", "1m"),
+            min_good=400,
         )
-    period_map = {"1m": "5d", "5m": "5d", "1h": "1mo"}
+    period_map = {"1m": "7d", "5m": "1mo", "1h": "1y"}
     yf_interval = {"1m": "1m", "5m": "5m", "1h": "60m"}[interval]
     return await _yf_history(market, code, period_map[interval], yf_interval)
 
