@@ -45,7 +45,9 @@ services:
 
   web:
     build: ./web
-    command: npm run dev
+    # 프로덕션 빌드로 서빙 — 라우트 프리페치/미니파이로 페이지 전환·상세 진입이 즉시 반응.
+    # (dev 모드는 라우트마다 on-demand 컴파일 + 프리페치 없음 → 전환이 느리고 부드럽지 못함)
+    command: sh -c "npm run build && npm run start"
     env_file: .env
     ports:
       - "${WEB_PORT:-3000}:3000"
