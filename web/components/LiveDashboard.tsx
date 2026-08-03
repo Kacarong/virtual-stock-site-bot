@@ -294,7 +294,22 @@ export function LiveDashboard() {
     return null;
   }
 
-  const rows = data || [];
+  // keepPreviousData 때문에 시장 탭을 바꿔도 이전 시장 데이터가 잠깐 남는다.
+  // 현재 선택한 시장에 속한 행만 표시 → "탭 바꿔도 그대로" 방지(전환 중엔 로딩 표시).
+  const marketMatches = (rowMarket: string, sel: MarketKey) => {
+    if (sel === "US")
+      return (
+        rowMarket === "NASDAQ" ||
+        rowMarket === "NYSE" ||
+        rowMarket === "AMEX"
+      );
+    if (sel === "UPBIT") return rowMarket === "UPBIT";
+    return rowMarket === "KRX";
+  };
+  const allRows = data || [];
+  const rows = allRows.filter((r) => marketMatches(r.market, market));
+  // data는 있는데 선택 시장과 안 맞으면 = 탭 전환 직후 새 데이터 대기 중
+  const transitioning = allRows.length > 0 && rows.length === 0;
 
   // 코인은 시가총액·산업 컬럼 제외 → 그리드 트랙도 시장별로 다르게
   const isUpbit = market === "UPBIT";
@@ -384,12 +399,12 @@ export function LiveDashboard() {
           {!isUpbit && <div className="hidden xl:block">산업</div>}
         </div>
 
-        {isLoading && rows.length === 0 && (
+        {(isLoading || transitioning) && rows.length === 0 && (
           <div className="px-4 py-10 text-center text-sm text-ink-3">
             불러오는 중…
           </div>
         )}
-        {!isLoading && rows.length === 0 && (
+        {!isLoading && !transitioning && rows.length === 0 && (
           <div className="px-4 py-10 text-center text-sm text-ink-3">
             데이터가 없습니다. (Toss 허용 IP 등록을 확인해 주세요)
           </div>
