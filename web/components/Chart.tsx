@@ -81,7 +81,15 @@ export function Chart({
         borderVisible: false,
         scaleMargins: { top: 0.05, bottom: 0.25 },
       },
-      timeScale: { borderVisible: false, timeVisible: true },
+      timeScale: {
+        borderVisible: false,
+        timeVisible: true,
+        // 봉이 많아도(분봉 수천 개) fitContent가 전체 범위를 화면 폭에 압축해
+        // 다 보여주도록 최소 간격을 크게 낮춘다. (기본 0.5px면 최근 일부만 보이고
+        // 나머지가 스크롤 밖으로 밀려 "당일치만 나온다"처럼 보였음)
+        minBarSpacing: 0.02,
+        rightOffset: 3,
+      },
       localization: {
         priceFormatter: (p: number) => {
           if (!isFinite(p)) return "-";
@@ -182,7 +190,12 @@ export function Chart({
       const nowShifted = Math.floor(Date.now() / 1000) + tz;
       bucket = Math.floor(nowShifted / intervalSec) * intervalSec;
     }
-    if (bucket != null && bucket > Number(last.time)) {
+    // 마지막 봉과 너무 벌어지면(장 마감 등) 새 봉을 만들지 않는다 —
+    // 현재시각에 유령 봉이 찍혀 차트가 어색해지는 것 방지. 다음 봉으로 넘어간
+    // 직후(활성 거래 중, 몇 개 간격 이내)만 새 봉을 append.
+    const nearby =
+      bucket != null && bucket - Number(last.time) <= (intervalSec || 60) * 3;
+    if (bucket != null && bucket > Number(last.time) && nearby) {
       const nc = { time: bucket, open: p, high: p, low: p, close: p } as any;
       try {
         c.update(nc);
