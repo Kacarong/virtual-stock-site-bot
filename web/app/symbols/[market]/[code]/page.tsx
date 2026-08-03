@@ -63,10 +63,13 @@ export default function SymbolPage({
     refreshInterval: 3000,
     keepPreviousData: true,
   });
-  const { data: candles } = useSWR<Candle[]>(
+  // keepPreviousData를 쓰지 않음 → 종목/봉(market+code+interval) 변경 시 이전 차트가
+  // 남지 않고 즉시 로딩 상태로 바뀐다(다른 종목 차트가 새 종목에 잔상으로 남는 문제 방지).
+  // 같은 키 자동 갱신 시엔 데이터가 유지되므로 깜빡이지 않는다.
+  const { data: candles, isLoading: candlesLoading } = useSWR<Candle[]>(
     `/market/history/${market}/${code}?interval=${tf}`,
     fetcher,
-    { refreshInterval: tf === "1m" ? 10000 : 60000, keepPreviousData: true }
+    { refreshInterval: tf === "1m" ? 10000 : 60000 }
   );
   const { data: hits } = useSWR<any[]>(
     `/market/search?q=${encodeURIComponent(code)}`,
@@ -355,8 +358,9 @@ export default function SymbolPage({
               }
             />
           ) : (
-            <div className="grid h-[360px] place-items-center text-sm text-ink-3">
-              차트 데이터를 불러오는 중…
+            <div className="flex h-[360px] flex-col items-center justify-center gap-3 text-sm text-ink-3">
+              <div className="h-6 w-6 animate-spin rounded-full border-2 border-bg-3 border-t-ink-2" />
+              <span>{candlesLoading ? "차트 불러오는 중…" : "차트 데이터가 없습니다"}</span>
             </div>
           )}
         </div>

@@ -91,14 +91,28 @@ async def on_startup() -> None:
             await _aio.gather(
                 _popular("KRX", "toss_value", 100),
                 _popular("KRX", "toss_volume", 100),
+                _popular("KRX", "market_cap", 100),
                 _popular("US", "toss_value", 100),
                 _popular("US", "toss_volume", 100),
+                _popular("US", "market_cap", 100),
                 _popular("UPBIT", "value", 100),
                 return_exceptions=True,
             )
             logger.info("popular warmup done")
         except Exception as e:
             logger.warning("popular warmup failed: {}", e)
+
+        # 시가총액 정렬은 발행주식수(fetch_stock_info)를 당겨와야 해서 콜드 시 1초+ 걸림.
+        # 상위 종목의 종목정보를 미리 데워 첫 '시가총액' 탭 전환을 즉시 반응하게 함.
+        try:
+            from .services.sources import toss as _toss_warm
+
+            for mk in ("KRX", "US"):
+                rows = await _popular(mk, "toss_value", 100)
+                await _toss_warm.fetch_stock_info([r["code"] for r in rows])
+            logger.info("stock_info(시가총액) warmup done")
+        except Exception as e:
+            logger.debug("stock_info warmup failed: {}", e)
 
         # 기본 탭의 거래비율(호가)도 미리 채움 — 첫 진입 시 "-" 최소화
         try:
