@@ -584,7 +584,16 @@ async def popular(
         # 시가총액 보강: rows에 비어 있으면 종목정보 캐시(발행주식수)로 즉시 채움
         # → 콜드 스타트에도 60초 캐시 사이클을 안 기다리고 바로 반영.
         if market != "UPBIT":
-            info = await _toss.fetch_stock_info(row_codes)  # 1h 캐시라 대개 즉시
+            # 발행주식수(시가총액용)는 1h 캐시라 대개 즉시지만, 캐시 미스 종목이 섞이면
+            # 외부 호출로 응답이 1~2초 지연됨(간헐적 느림). 짧게만 기다리고, 못 받으면
+            # 백그라운드로 데워 다음 폴링(2초)에서 반영 → 응답은 절대 오래 안 막힘.
+            try:
+                info = await asyncio.wait_for(
+                    _toss.fetch_stock_info(row_codes), timeout=0.4
+                )
+            except asyncio.TimeoutError:
+                info = {}
+                asyncio.create_task(_toss.fetch_stock_info(row_codes))
             usdkrw = 0.0
             if market == "US":
                 try:
