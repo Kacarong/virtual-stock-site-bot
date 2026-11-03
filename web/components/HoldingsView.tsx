@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { useState } from "react";
 import useSWR from "swr";
-import { api, fmtKRW, fmtPrice, fmtQty, pctClass } from "@/lib/api";
+import { api, fmtKRW, fmtPrice, fmtQty, isUnauthorized, pctClass } from "@/lib/api";
+import { LoginRequired } from "@/components/LoginRequired";
 
 type Holding = {
   symbol_id: number;
@@ -182,9 +183,13 @@ function RealizedCard() {
 }
 
 export function HoldingsView() {
-  const { data, isLoading } = useSWR<Portfolio>("/portfolio", fetcher, {
+  const { data, error, isLoading } = useSWR<Portfolio>("/portfolio", fetcher, {
     refreshInterval: 5000,
   });
+
+  if (isUnauthorized(error)) {
+    return <LoginRequired message="보유종목을 보려면 로그인이 필요합니다." />;
+  }
 
   if (isLoading || !data) {
     return <div className="p-8 text-sm text-ink-3">불러오는 중…</div>;

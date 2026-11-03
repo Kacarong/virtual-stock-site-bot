@@ -1,5 +1,19 @@
 // API helpers. Next.js rewrites /api/* → backend.
 
+/** HTTP 상태를 보존하는 에러 — 메시지(detail)만으론 401 여부를 알 수 없어서. */
+export class ApiError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
+/** 비로그인(401) 에러인지. */
+export function isUnauthorized(e: unknown): boolean {
+  return (e as any)?.status === 401;
+}
+
 export async function api<T = any>(
   path: string,
   init?: RequestInit
@@ -18,7 +32,7 @@ export async function api<T = any>(
       const j = await r.json();
       msg = j.detail || msg;
     } catch {}
-    throw new Error(msg);
+    throw new ApiError(r.status, msg);
   }
   if (r.status === 204) return undefined as T;
   return r.json();

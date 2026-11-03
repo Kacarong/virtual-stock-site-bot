@@ -6,7 +6,8 @@ import { Chart } from "@/components/Chart";
 import { OrderBook } from "@/components/OrderBook";
 import { RecentTrades } from "@/components/RecentTrades";
 import { FxModal } from "@/components/FxModal";
-import { api, fmtPrice, fmtQty, pctClass, fmtKRW, fmtSmart, fmtNum } from "@/lib/api";
+import { api, fmtPrice, fmtQty, pctClass, fmtKRW, fmtSmart, fmtNum, isUnauthorized } from "@/lib/api";
+import { LoginRequired } from "@/components/LoginRequired";
 import { useUsdToKrw } from "@/lib/useUsdToKrw";
 
 type Quote = {
@@ -97,13 +98,14 @@ export default function SymbolPage({
   const [limitPrice, setLimitPrice] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [needLogin, setNeedLogin] = useState<string | null>(null);
 
   // 미국주식 원화 보기 토글 (대시보드와 공유)
   const isUS = market === "NASDAQ" || market === "NYSE" || market === "AMEX";
   const [showKrw, setShowKrw] = useUsdToKrw();
   const [fxOpen, setFxOpen] = useState(false);
   // 포트폴리오 — 환율 + 현재 종목 보유 수량(전량매도용) + 현금 잔액
-  const { data: pf, mutate: mutatePf } = useSWR<{
+  const { data: pf, error: pfError, mutate: mutatePf } = useSWR<{
     usdkrw: string;
     cash_krw: string;
     cash_usd: string;
@@ -130,6 +132,11 @@ export default function SymbolPage({
   async function submit() {
     setMsg(null);
     setErr(null);
+    setNeedLogin(null);
+    if (isUnauthorized(pfError)) {
+      setNeedLogin("주문하려면 로그인이 필요합니다.");
+      return;
+    }
     // symbol_id 우선순위: quote 응답 → search 결과
     const symbolId = q?.symbol_id ?? sym?.id;
     if (!symbolId) {
@@ -162,7 +169,8 @@ export default function SymbolPage({
       const qStr = fmtQty(r.qty, market);
       setMsg(`${r.name || code} ${sideKo} ${qStr}주 — ${stateKo}`);
     } catch (e: any) {
-      setErr(e.message);
+      if (isUnauthorized(e)) setNeedLogin("주문하려면 로그인이 필요합니다.");
+      else setErr(e.message);
     }
   }
 
@@ -175,6 +183,7 @@ export default function SymbolPage({
     if (!symbolIdAny) return;
     setMsg(null);
     setErr(null);
+    setNeedLogin(null);
     try {
       if (isWatched) {
         await api(`/watchlist/${symbolIdAny}`, { method: "DELETE" });
@@ -185,7 +194,8 @@ export default function SymbolPage({
       }
       mutateWatch();
     } catch (e: any) {
-      setErr(e.message);
+      if (isUnauthorized(e)) setNeedLogin("관심종목을 쓰려면 로그인이 필요합니다.");
+      else setErr(e.message);
     }
   }
 
@@ -581,6 +591,7 @@ export default function SymbolPage({
             {err}
           </p>
         )}
+        {needLogin && <LoginRequired compact message={needLogin} />}
         </div>
       </div>
 

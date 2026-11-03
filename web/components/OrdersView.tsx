@@ -2,22 +2,27 @@
 
 import { useState } from "react";
 import useSWR from "swr";
-import { api, fmtNum } from "@/lib/api";
+import { api, fmtNum, isUnauthorized } from "@/lib/api";
+import { LoginRequired } from "@/components/LoginRequired";
 
 const fetcher = (u: string) => api(u);
 
 export function OrdersView() {
   const [tab, setTab] = useState<"pending" | "all" | "trades">("pending");
-  const { data: orders, mutate } = useSWR<any[]>(
+  const { data: orders, error: ordersError, mutate } = useSWR<any[]>(
     tab === "trades" ? null : `/orders?${tab === "pending" ? "status=PENDING" : ""}`,
     fetcher,
     { refreshInterval: 3000 }
   );
-  const { data: trades } = useSWR<any[]>(
+  const { data: trades, error: tradesError } = useSWR<any[]>(
     tab === "trades" ? "/orders/trades" : null,
     fetcher,
     { refreshInterval: 5000 }
   );
+
+  if (isUnauthorized(ordersError) || isUnauthorized(tradesError)) {
+    return <LoginRequired message="주문·거래 내역을 보려면 로그인이 필요합니다." />;
+  }
 
   async function cancel(id: number) {
     if (!confirm(`주문 #${id} 취소?`)) return;

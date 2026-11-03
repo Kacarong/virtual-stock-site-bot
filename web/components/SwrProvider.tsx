@@ -1,6 +1,7 @@
 "use client";
 
 import { SWRConfig } from "swr";
+import { isUnauthorized } from "@/lib/api";
 
 /**
  * 전역 SWR 설정.
@@ -25,8 +26,7 @@ export function SwrProvider({ children }: { children: React.ReactNode }) {
         dedupingInterval: 2000,
         // 4xx (특히 404) 도 재시도. 401만 즉시 중단(로그인 페이지로 보내야 함).
         onErrorRetry: (error, _key, _cfg, revalidate, { retryCount }) => {
-          const msg = (error?.message || "").toString();
-          if (msg.includes("401")) return;
+          if (isUnauthorized(error)) return;
           if (retryCount >= 30) return;
           setTimeout(() => revalidate({ retryCount }), 2000);
         },
