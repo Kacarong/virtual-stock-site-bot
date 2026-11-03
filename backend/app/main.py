@@ -123,7 +123,7 @@ async def on_startup() -> None:
 
             for mk, sort in (("KRX", "toss_value"), ("US", "toss_value")):
                 rows = await _popular(mk, sort, 100)
-                _spawn_ratio_refresh([r["code"] for r in rows])
+                _spawn_ratio_refresh([r["code"] for r in rows], background=True)
             up_rows = await _popular("UPBIT", "value", 100)
             _spawn_upbit_ratio_refresh([r["code"] for r in up_rows])
             logger.info("ratio warmup triggered")

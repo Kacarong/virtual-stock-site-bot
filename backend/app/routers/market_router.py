@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from collections import deque
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -93,45 +94,83 @@ def _ratio_stale(code: str, now: float) -> bool:
     return now - ts >= (_RATIO_TTL if val is not None else 15.0)
 
 
-# 갱신 중인 종목 — 목록 폴링(5초)마다 같은 종목 호가 조회가 중복으로 쌓이는 것을 막는다.
+# 갱신 중인 종목(대기열에 있거나 조회 중) — 목록 폴링(5초)마다 같은 종목이 중복으로 쌓이는 것을 막는다.
 _ratio_inflight: set[str] = set()
-# 거래비율 갱신 전체가 공유하는 동시 조회 상한 — Toss 요청 슬롯(4)을 다 차지하면
-# 종목 상세의 호가/체결 조회가 그 뒤에 줄 서서 수 초씩 밀린다. 정렬별로 종목 묶음이
-# 달라 갱신 작업이 여러 개 동시에 돌 수 있으므로 작업마다 만들지 않고 하나만 둔다.
-_RATIO_SEM = asyncio.Semaphore(2)
+
+# 거래비율(Toss 호가) 갱신 대기열 + 공유 작업자 2개.
+# - 동시 조회는 작업자 수(2)로 고정 — Toss 요청 슬롯(4)을 다 차지하면 종목 상세의
+#   호가/체결 조회가 그 뒤에 줄 서서 수 초씩 밀린다.
+# - 우선순위: 화면 요청 중 한 번도 받은 적 없는 종목(hi) → 나머지(lo: 시작 시 사전 조회,
+#   이미 값이 있는 종목의 주기 갱신). 빈 캐시에서 사전 조회 200종목이 화면을 막지 않게 한다.
+_RATIO_WORKERS = 2
+_ratio_hi: deque[str] = deque()
+_ratio_lo: deque[str] = deque()
+_ratio_wake: asyncio.Event | None = None
+_ratio_worker_tasks: list[asyncio.Task] = []
 
 
-def _spawn_ratio_refresh(codes: list[str]) -> None:
-    now = time.time()
-    need = [c for c in codes if c not in _ratio_inflight and _ratio_stale(c, now)]
-    if not need:
-        return
-    _ratio_inflight.update(need)
-
-    async def _go() -> None:
-        async def _one(code: str) -> None:
-            async with _RATIO_SEM:
-                try:
-                    ob = await _toss.fetch_orderbook(code)
-                except Exception:
-                    ob = None
-                r: float | None = None
-                if ob:
-                    bids = sum(x.get("volume") or 0 for x in ob.get("bids", []))
-                    asks = sum(x.get("volume") or 0 for x in ob.get("asks", []))
-                    tot = bids + asks
-                    r = (bids / tot) if tot > 0 else None
-                _store_ratio(code, r)
-
-        try:
-            await asyncio.gather(*(_one(c) for c in need))
-        finally:
-            _ratio_inflight.difference_update(need)
-
+async def _ratio_fetch(code: str) -> None:
     try:
-        asyncio.get_running_loop().create_task(_go())
+        ob = await _toss.fetch_orderbook(code)
+    except Exception:
+        ob = None
+    r: float | None = None
+    if ob:
+        bids = sum(x.get("volume") or 0 for x in ob.get("bids", []))
+        asks = sum(x.get("volume") or 0 for x in ob.get("asks", []))
+        tot = bids + asks
+        r = (bids / tot) if tot > 0 else None
+    _store_ratio(code, r)
+
+
+async def _ratio_worker() -> None:
+    assert _ratio_wake is not None
+    while True:
+        if _ratio_hi:
+            code = _ratio_hi.popleft()
+        elif _ratio_lo:
+            code = _ratio_lo.popleft()
+        else:
+            _ratio_wake.clear()
+            await _ratio_wake.wait()
+            continue
+        try:
+            await _ratio_fetch(code)
+        except Exception:
+            pass
+        finally:
+            _ratio_inflight.discard(code)
+
+
+def _spawn_ratio_refresh(codes: list[str], *, background: bool = False) -> None:
+    """만료된 종목을 거래비율 갱신 대기열에 넣는다. background=True면 낮은 우선순위."""
+    global _ratio_wake
+    try:
+        loop = asyncio.get_running_loop()
     except RuntimeError:
-        _ratio_inflight.difference_update(need)
+        return
+    if _ratio_wake is None:
+        _ratio_wake = asyncio.Event()
+    now = time.time()
+    added = False
+    for c in codes:
+        if not _ratio_stale(c, now):
+            continue
+        high = not background and c not in _ratio_cache
+        if c in _ratio_inflight:
+            # 사전 조회로 낮은 순위에 대기 중인데 화면이 지금 필요로 하면 앞으로 당긴다.
+            if high and c in _ratio_lo:
+                _ratio_lo.remove(c)
+                _ratio_hi.append(c)
+            continue
+        _ratio_inflight.add(c)
+        (_ratio_hi if high else _ratio_lo).append(c)
+        added = True
+    _ratio_worker_tasks[:] = [t for t in _ratio_worker_tasks if not t.done()]
+    while len(_ratio_worker_tasks) < _RATIO_WORKERS:
+        _ratio_worker_tasks.append(loop.create_task(_ratio_worker()))
+    if added or _ratio_hi:
+        _ratio_wake.set()
 
 
 def _spawn_upbit_ratio_refresh(codes: list[str]) -> None:
