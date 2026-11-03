@@ -45,6 +45,13 @@ async def sync_upbit() -> int:
     rows = await upbit.fetch_markets()
     db = SessionLocal()
     try:
+        # 상장폐지된 코인 비활성화 — 남겨두면 시세 일괄조회가 404로 통째로 실패한다.
+        listed = {m["market"] for m in rows}
+        if listed:
+            for sym in db.query(Symbol).filter(Symbol.market == "UPBIT", Symbol.is_active):
+                if sym.code not in listed:
+                    sym.is_active = False
+                    logger.info("upbit delisted → inactive: {}", sym.code)
         for m in rows:
             _upsert_symbol(
                 db,

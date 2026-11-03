@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from decimal import Decimal
 
 import httpx
@@ -51,6 +52,49 @@ async def fetch_candles(code: str, unit: str = "1d", count: int = 200) -> list[d
         return []
 
 
+async def fetch_orderbook(code: str) -> dict | None:
+    """호가 — Toss fetch_orderbook과 같은 형식. asks/bids 모두 최우선 호가부터."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.get(f"{BASE}/v1/orderbook", params={"markets": code})
+            r.raise_for_status()
+            rows = r.json()
+    except Exception as e:
+        logger.warning("upbit orderbook failed {}: {}", code, e)
+        return None
+    if not rows:
+        return None
+    units = rows[0].get("orderbook_units") or []
+    return {
+        "asks": [{"price": float(u["ask_price"]), "volume": float(u["ask_size"])} for u in units],
+        "bids": [{"price": float(u["bid_price"]), "volume": float(u["bid_size"])} for u in units],
+        "currency": "KRW",
+    }
+
+
+async def fetch_trades(code: str, count: int = 30) -> list[dict]:
+    """최근 체결 — Toss fetch_trades와 같은 형식 [{price, volume, timestamp(ISO)}]."""
+    try:
+        async with httpx.AsyncClient(timeout=10) as c:
+            r = await c.get(
+                f"{BASE}/v1/trades/ticks",
+                params={"market": code, "count": max(1, min(count, 100))},
+            )
+            r.raise_for_status()
+            rows = r.json()
+    except Exception as e:
+        logger.warning("upbit trades failed {}: {}", code, e)
+        return []
+    return [
+        {
+            "price": float(t["trade_price"]),
+            "volume": float(t["trade_volume"]),
+            "timestamp": datetime.fromtimestamp(t["timestamp"] / 1000, timezone.utc).isoformat(),
+        }
+        for t in rows
+    ]
+
+
 async def fetch_orderbook_ratios(codes: list[str]) -> dict[str, float | None]:
     """호가 매수/매도 총잔량 비율. {code: bid/(bid+ask)} (0~1). 최대 여러개 한 번에."""
     if not codes:
@@ -84,6 +128,12 @@ async def fetch_tickers_full(codes: list[str]) -> list[dict]:
     """원시 ticker 행 반환 — 거래대금 등 부가정보 포함."""
     if not codes:
         return []
+    # 상장폐지 코드가 하나라도 섞이면 Upbit가 chunk 전체를 404로 거절 → 사전 필터링.
+    try:
+        valid = {m["market"] for m in await fetch_markets()}
+        codes = [c for c in codes if c in valid]
+    except Exception as e:
+        logger.warning("upbit market_all failed, no prefilter: {}", e)
     out: list[dict] = []
     CHUNK = 100
     async with httpx.AsyncClient(timeout=10) as c:
@@ -91,6 +141,7 @@ async def fetch_tickers_full(codes: list[str]) -> list[dict]:
             chunk = codes[i : i + CHUNK]
             r = await c.get(f"{BASE}/v1/ticker", params={"markets": ",".join(chunk)})
             if r.status_code != 200:
+                logger.warning("upbit ticker chunk failed {}: {}", r.status_code, chunk[:3])
                 continue
             out.extend(r.json())
     return out

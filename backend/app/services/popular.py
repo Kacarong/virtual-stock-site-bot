@@ -855,7 +855,9 @@ async def popular_us(sort: Sort, limit: int = 30, *, _force_full: bool = False) 
     if (c := _cached(("US", sort))) is not None:
         return c[:limit]
 
-    lock = _lock_for("US")
+    # 시가총액은 Stooq/yfinance 경로라 수십 초 걸린다 — 같은 락을 쓰면 그동안
+    # 토스 기반 거래량/거래대금 목록 갱신이 전부 막히므로 락을 분리한다.
+    lock = _lock_for("US:market_cap" if sort == "market_cap" else "US")
 
     if not _force_full:
         # stale-while-revalidate: 즉시 응답 가능한 폴백 → 백그라운드 갱신 후 즉시 반환
@@ -1003,10 +1005,14 @@ async def popular_us(sort: Sort, limit: int = 30, *, _force_full: bool = False) 
         # 빈 결과는 캐시하지 않음 — 다음 요청에서 다시 시도
         if out:
             _store(("US", sort), _sort_rows(list(out), sort))
-            for s in ("value", "volume", "change", "decline", "market_cap"):
-                if s != sort:
-                    _store(("US", s), _sort_rows(list(out), s))  # type: ignore
-            _persist_prices("US", out)
+            # 시가총액 정렬은 토스 랭킹이 없어 항상 이 경로(Stooq/yfinance = 정규장 종가)를 탄다.
+            # 그 결과로 토스 실시간 목록(거래량 등)과 DB 현재가를 덮어쓰면 프리/애프터마켓에
+            # 전일 종가가 현재가로 보인다 → 시가총액은 자기 캐시만 갱신.
+            if sort != "market_cap":
+                for s in ("value", "volume", "change", "decline", "market_cap"):
+                    if s != sort:
+                        _store(("US", s), _sort_rows(list(out), s))  # type: ignore
+                _persist_prices("US", out)
             _persist_cache_to_disk()
             return _sort_rows(out, sort)[:limit]
 

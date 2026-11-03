@@ -93,14 +93,21 @@ def _ratio_stale(code: str, now: float) -> bool:
     return now - ts >= (_RATIO_TTL if val is not None else 15.0)
 
 
+# 갱신 중인 종목 — 목록 폴링(5초)마다 같은 종목 호가 조회가 중복으로 쌓이는 것을 막는다.
+_ratio_inflight: set[str] = set()
+
+
 def _spawn_ratio_refresh(codes: list[str]) -> None:
     now = time.time()
-    need = [c for c in codes if _ratio_stale(c, now)]
+    need = [c for c in codes if c not in _ratio_inflight and _ratio_stale(c, now)]
     if not need:
         return
+    _ratio_inflight.update(need)
 
     async def _go() -> None:
-        sem = asyncio.Semaphore(6)
+        # 백그라운드 일괄 갱신은 동시 2개로 제한 — Toss 요청 슬롯(4)을 다 차지하면
+        # 종목 상세의 호가/체결 조회가 그 뒤에 줄 서서 수 초씩 밀린다.
+        sem = asyncio.Semaphore(2)
 
         async def _one(code: str) -> None:
             async with sem:
@@ -116,30 +123,37 @@ def _spawn_ratio_refresh(codes: list[str]) -> None:
                     r = (bids / tot) if tot > 0 else None
                 _store_ratio(code, r)
 
-        await asyncio.gather(*(_one(c) for c in need))
+        try:
+            await asyncio.gather(*(_one(c) for c in need))
+        finally:
+            _ratio_inflight.difference_update(need)
 
     try:
         asyncio.get_running_loop().create_task(_go())
     except RuntimeError:
-        pass
+        _ratio_inflight.difference_update(need)
 
 
 def _spawn_upbit_ratio_refresh(codes: list[str]) -> None:
     """코인 거래비율 — Upbit 호가 총잔량 비율(배치, 저렴). 30s 캐시."""
     now = time.time()
-    need = [c for c in codes if _ratio_stale(c, now)]
+    need = [c for c in codes if c not in _ratio_inflight and _ratio_stale(c, now)]
     if not need:
         return
+    _ratio_inflight.update(need)
 
     async def _go() -> None:
-        ratios = await _upbit.fetch_orderbook_ratios(need)
-        for c in need:
-            _store_ratio(c, ratios.get(c))
+        try:
+            ratios = await _upbit.fetch_orderbook_ratios(need)
+            for c in need:
+                _store_ratio(c, ratios.get(c))
+        finally:
+            _ratio_inflight.difference_update(need)
 
     try:
         asyncio.get_running_loop().create_task(_go())
     except RuntimeError:
-        pass
+        _ratio_inflight.difference_update(need)
 
 
 @router.get("/search")
@@ -513,9 +527,12 @@ _OB_FRESH = 1.2
 _TR_FRESH = 1.5
 
 
-async def _ob_refresh(code: str) -> dict | None:
+async def _ob_refresh(market: str, code: str) -> dict | None:
     try:
-        ob = await _toss.fetch_orderbook(code)
+        if market.upper() == "UPBIT":
+            ob = await _upbit.fetch_orderbook(code)
+        else:
+            ob = await _toss.fetch_orderbook(code)
     except Exception:
         ob = None
     if ob:
@@ -526,7 +543,7 @@ async def _ob_refresh(code: str) -> dict | None:
 
 @router.get("/orderbook/{market}/{code}")
 async def orderbook(market: str, code: str) -> dict:
-    """호가 (Toss) — stale-while-revalidate. 미지원/실패 시 빈 호가."""
+    """호가 (주식=Toss, 코인=Upbit) — stale-while-revalidate. 미지원/실패 시 빈 호가."""
     now = time.time()
     c = _ob_cache.get(code)
     if c and now - c[0] < _OB_FRESH:
@@ -534,15 +551,18 @@ async def orderbook(market: str, code: str) -> dict:
     if c:  # stale → 즉시 반환 + 백그라운드 갱신
         if code not in _ob_inflight:
             _ob_inflight.add(code)
-            asyncio.create_task(_ob_refresh(code))
+            asyncio.create_task(_ob_refresh(market, code))
         return c[1]
-    ob = await _ob_refresh(code)
+    ob = await _ob_refresh(market, code)
     return ob or {"asks": [], "bids": [], "currency": None}
 
 
-async def _tr_refresh(code: str, count: int) -> list | None:
+async def _tr_refresh(market: str, code: str, count: int) -> list | None:
     try:
-        tr = await _toss.fetch_trades(code, count)
+        if market.upper() == "UPBIT":
+            tr = await _upbit.fetch_trades(code, count)
+        else:
+            tr = await _toss.fetch_trades(code, count)
     except Exception:
         tr = None
     if tr:
@@ -553,7 +573,7 @@ async def _tr_refresh(code: str, count: int) -> list | None:
 
 @router.get("/trades/{market}/{code}")
 async def market_trades(market: str, code: str, count: int = 30) -> list[dict]:
-    """최근 체결 (Toss) — stale-while-revalidate."""
+    """최근 체결 (주식=Toss, 코인=Upbit) — stale-while-revalidate."""
     now = time.time()
     c = _tr_cache.get(code)
     if c and now - c[0] < _TR_FRESH:
@@ -561,9 +581,9 @@ async def market_trades(market: str, code: str, count: int = 30) -> list[dict]:
     if c:
         if code not in _tr_inflight:
             _tr_inflight.add(code)
-            asyncio.create_task(_tr_refresh(code, count))
+            asyncio.create_task(_tr_refresh(market, code, count))
         return c[1]
-    tr = await _tr_refresh(code, count)
+    tr = await _tr_refresh(market, code, count)
     return tr or []
 
 
