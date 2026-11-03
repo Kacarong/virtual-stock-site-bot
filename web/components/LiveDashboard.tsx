@@ -166,10 +166,44 @@ function PctFlash({
   );
 }
 
+const TOSS_LOGO = (code: string) =>
+  `https://static.toss.im/png-icons/securities/icn-sec-fill-${code}.png`;
+
+// 고화질 로고 후보를 순서대로 시도하고, 전부 실패하면 첫 글자로 대체.
+function logoCandidates(row: Row, coinLogos?: Record<string, string>): string[] {
+  if (row.market === "UPBIT") {
+    const coin = row.code.replace(/^KRW-/, "");
+    const cg = coinLogos?.[row.code];
+    return [...(cg ? [cg] : []), `https://static.upbit.com/logos/${coin}.png`];
+  }
+  if (row.market === "KRX") {
+    // 우선주(005935 등)는 토스에 로고가 없어 보통주(005930) 로고를 쓴다.
+    const common = row.code.slice(0, -1) + "0";
+    return common !== row.code
+      ? [TOSS_LOGO(row.code), TOSS_LOGO(common)]
+      : [TOSS_LOGO(row.code)];
+  }
+  const t = encodeURIComponent(row.code);
+  return [
+    TOSS_LOGO(row.code),
+    `https://assets.parqet.com/logos/symbol/${t}?format=png&size=256`,
+    `https://financialmodelingprep.com/image-stock/${t}.png`,
+  ];
+}
+
 function Logo({ row }: { row: Row }) {
-  const [err, setErr] = useState(false);
-  const url = `https://static.toss.im/png-icons/securities/icn-sec-fill-${row.code}.png`;
-  if (err)
+  const isCoin = row.market === "UPBIT";
+  const { data: coinLogos, error } = useSWR<Record<string, string>>(
+    isCoin ? "/market/coin-logos" : null,
+    fetcher,
+    { revalidateOnFocus: false, dedupingInterval: 600000 }
+  );
+  const [idx, setIdx] = useState(0);
+  // 코인은 고화질 맵을 받은 뒤에 시도해야 저화질 업비트 로고가 먼저 뜨지 않는다.
+  const waiting = isCoin && !coinLogos && !error;
+  const urls = waiting ? [] : logoCandidates(row, coinLogos);
+  const url = urls[idx];
+  if (!url)
     return (
       <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-bg-3 text-[11px] text-ink-2">
         {row.name.slice(0, 1)}
@@ -178,12 +212,13 @@ function Logo({ row }: { row: Row }) {
   return (
     // eslint-disable-next-line @next/next/no-img-element
     <img
+      key={url}
       src={url}
       alt=""
       width={28}
       height={28}
       className="h-7 w-7 shrink-0 rounded-full bg-white object-contain"
-      onError={() => setErr(true)}
+      onError={() => setIdx((i) => i + 1)}
     />
   );
 }

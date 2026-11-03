@@ -25,6 +25,7 @@ from ..models import Price, Symbol, User
 from ..services.industries import industries as industries_svc
 from ..services.industries import industry_label
 from ..services.market_calendar import is_market_open, next_open
+from ..services.coin_logos import coin_logos as coin_logos_svc
 from ..services.history import get_history
 from ..services.popular import popular as popular_svc
 from ..services.quotes import get_quote
@@ -741,6 +742,12 @@ async def popular(
 async def industries() -> list[dict]:
     """업종별/테마별 종목 — 한국/미국/코인 묶음."""
     return await industries_svc()
+
+
+@router.get("/coin-logos")
+async def coin_logos() -> dict[str, str]:
+    """코인 고화질 로고 URL 맵 {"KRW-BTC": url}. 없는 코인은 프론트가 대체 로고 사용."""
+    return coin_logos_svc()
 
 
 @router.post("/symbols/sync")
