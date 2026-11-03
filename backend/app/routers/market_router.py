@@ -95,6 +95,10 @@ def _ratio_stale(code: str, now: float) -> bool:
 
 # 갱신 중인 종목 — 목록 폴링(5초)마다 같은 종목 호가 조회가 중복으로 쌓이는 것을 막는다.
 _ratio_inflight: set[str] = set()
+# 거래비율 갱신 전체가 공유하는 동시 조회 상한 — Toss 요청 슬롯(4)을 다 차지하면
+# 종목 상세의 호가/체결 조회가 그 뒤에 줄 서서 수 초씩 밀린다. 정렬별로 종목 묶음이
+# 달라 갱신 작업이 여러 개 동시에 돌 수 있으므로 작업마다 만들지 않고 하나만 둔다.
+_RATIO_SEM = asyncio.Semaphore(2)
 
 
 def _spawn_ratio_refresh(codes: list[str]) -> None:
@@ -105,12 +109,8 @@ def _spawn_ratio_refresh(codes: list[str]) -> None:
     _ratio_inflight.update(need)
 
     async def _go() -> None:
-        # 백그라운드 일괄 갱신은 동시 2개로 제한 — Toss 요청 슬롯(4)을 다 차지하면
-        # 종목 상세의 호가/체결 조회가 그 뒤에 줄 서서 수 초씩 밀린다.
-        sem = asyncio.Semaphore(2)
-
         async def _one(code: str) -> None:
-            async with sem:
+            async with _RATIO_SEM:
                 try:
                     ob = await _toss.fetch_orderbook(code)
                 except Exception:
