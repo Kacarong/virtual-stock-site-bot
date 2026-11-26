@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from ..auth import current_user
-from ..db import get_db
+from ..db import get_db, utc_iso
 from ..models import Order, Symbol, Trade, User
 from ..services.engine import OrderError, cancel_order, place_order
 
@@ -60,12 +60,12 @@ def _serialize(o: Order, sym: Symbol | None) -> dict:
         "order_type": o.order_type,
         "qty": str(o.qty),
         "limit_price": str(o.limit_price) if o.limit_price else None,
-        "scheduled_at": o.scheduled_at.isoformat() if o.scheduled_at else None,
+        "scheduled_at": utc_iso(o.scheduled_at),
         "status": o.status,
         "filled_qty": str(o.filled_qty),
         "avg_fill_price": str(o.avg_fill_price) if o.avg_fill_price else None,
         "reject_reason": o.reject_reason,
-        "created_at": o.created_at.isoformat(),
+        "created_at": utc_iso(o.created_at),
     }
 
 
@@ -151,7 +151,7 @@ def list_trades(
             "qty": str(t.qty),
             "fee": str(t.fee),
             "tax": str(t.tax),
-            "executed_at": t.executed_at.isoformat(),
+            "executed_at": utc_iso(t.executed_at),
         }
         for t, o, s in rows
     ]

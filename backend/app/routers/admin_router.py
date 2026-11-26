@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..auth import admin_required
-from ..db import get_db, lock_for_update
+from ..db import get_db, lock_for_update, utc_iso
 from ..models import CashLedger, Holding, Order, User
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -37,7 +37,7 @@ def list_users(
             "cash_krw": str(u.cash_krw),
             "cash_usd": str(u.cash_usd),
             "is_admin": u.is_admin,
-            "created_at": u.created_at.isoformat(),
+            "created_at": utc_iso(u.created_at),
         }
         for u in rows
     ]

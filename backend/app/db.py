@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy import create_engine, text
@@ -38,6 +39,15 @@ def get_db() -> Iterator[Session]:
         yield db
     finally:
         db.close()
+
+
+def utc_iso(dt: datetime | None) -> str | None:
+    """DB의 naive 시각(UTC)을 오프셋 포함 ISO로. 오프셋이 없으면 브라우저가 현지시각으로 읽어 9시간 어긋난다."""
+    if dt is None:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.isoformat()
 
 
 def lock_for_update(db: Session, user_id: int) -> None:

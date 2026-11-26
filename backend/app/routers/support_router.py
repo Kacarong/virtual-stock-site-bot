@@ -14,7 +14,7 @@ from sqlalchemy import func as sa_func
 from sqlalchemy.orm import Session
 
 from ..auth import admin_required, current_user
-from ..db import get_db
+from ..db import get_db, utc_iso
 from ..models import CashLedger, SupportGrant, SupportGrantDismissal, User
 
 router = APIRouter(prefix="/support", tags=["support"])
@@ -89,7 +89,7 @@ def notifications(
             "title": g.title,
             "message": g.message,
             "amount_krw": str(g.amount_krw),
-            "created_at": g.created_at.isoformat(),
+            "created_at": utc_iso(g.created_at),
         }
         for g in grants
     ]

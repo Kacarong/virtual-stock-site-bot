@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import useSWR from "swr";
 import { Chart } from "@/components/Chart";
 import { OrderBook } from "@/components/OrderBook";
@@ -86,6 +86,8 @@ export default function SymbolPage({
     { refreshInterval: 30000 }
   );
   const sym = hits?.find((h: any) => h.market === market && h.code === code);
+  // 장 상태를 받기 전에는 '마감'으로 단정하지 않는다 (장중 새로고침 시 예약주문으로 고정되던 문제)
+  const statusKnown = market === "UPBIT" || !!mstatus?.[market];
   const isOpen = mstatus?.[market]?.open ?? (market === "UPBIT");
   const nextOpen = mstatus?.[market]?.next_open;
   const session = mstatus?.[market]?.session;
@@ -99,6 +101,8 @@ export default function SymbolPage({
   const [msg, setMsg] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [needLogin, setNeedLogin] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const submittingRef = useRef(false); // 같은 렌더 안의 연속 클릭도 막도록 ref로 즉시 잠금
 
   // 미국주식 원화 보기 토글 (대시보드와 공유)
   const isUS = market === "NASDAQ" || market === "NYSE" || market === "AMEX";
@@ -124,12 +128,15 @@ export default function SymbolPage({
     }
   }, [q?.price]);
 
-  // 시장 닫혀있으면 자동으로 예약주문 모드
+  // 장 상태에 맞춰 시장가 ↔ 예약주문 전환 (마감 중엔 시장가 대신 예약, 개장하면 다시 시장가)
   useEffect(() => {
+    if (!statusKnown) return;
     if (!isOpen && orderType === "MARKET") setOrderType("SCHEDULED");
-  }, [isOpen]);
+    if (isOpen && orderType === "SCHEDULED") setOrderType("MARKET");
+  }, [isOpen, statusKnown]);
 
   async function submit() {
+    if (submittingRef.current || !statusKnown) return; // 연타·장 상태 확인 전 주문 방지
     setMsg(null);
     setErr(null);
     setNeedLogin(null);
@@ -143,6 +150,12 @@ export default function SymbolPage({
       setErr("종목 정보를 찾는 중입니다. 잠시 후 다시 시도하세요.");
       return;
     }
+    if (orderType === "SCHEDULED" && !nextOpen) {
+      setErr("다음 개장 시각을 확인하는 중입니다. 잠시 후 다시 시도하세요.");
+      return;
+    }
+    submittingRef.current = true;
+    setSubmitting(true);
     try {
       const body: any = {
         symbol_id: symbolId,
@@ -171,6 +184,9 @@ export default function SymbolPage({
     } catch (e: any) {
       if (isUnauthorized(e)) setNeedLogin("주문하려면 로그인이 필요합니다.");
       else setErr(e.message);
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
     }
   }
 
@@ -572,11 +588,16 @@ export default function SymbolPage({
 
         <button
           onClick={submit}
-          className={`mt-5 w-full rounded-2xl py-3 text-sm font-semibold text-white ${
+          disabled={submitting || !statusKnown}
+          className={`mt-5 w-full rounded-2xl py-3 text-sm font-semibold text-white disabled:opacity-60 ${
             side === "BUY" ? "bg-up" : "bg-down"
           }`}
         >
-          {orderType === "SCHEDULED"
+          {!statusKnown
+            ? "장 상태 확인 중…"
+            : submitting
+            ? "주문 중…"
+            : orderType === "SCHEDULED"
             ? `${side === "BUY" ? "예약 매수" : "예약 매도"}`
             : `${side === "BUY" ? "매수 주문" : "매도 주문"}`}
         </button>

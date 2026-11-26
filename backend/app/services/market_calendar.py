@@ -116,11 +116,15 @@ def _krx_holidays_year(year: int) -> set[str]:
         from pykrx import stock  # type: ignore
 
         # pykrx는 영업일 리스트를 주므로 전체 일자 차집합으로 휴장일 산출
-        days = stock.get_previous_business_days(year=year)  # KRX 영업일
+        days = stock.get_previous_business_days(year=year)  # KRX 영업일 (오늘까지만 나온다)
         biz = {d.strftime("%Y-%m-%d") for d in days}
-        # 한 해 전체 평일 중 영업일에 없는 = 휴장일 (주말은 제외)
+        if not biz:
+            # 조회 실패 시 모든 평일을 휴장일로 잘못 판단하지 않도록 비워 둔다
+            logger.warning("pykrx business days empty for {}", year)
+            return set()
+        # 영업일 목록이 끝나는 날까지만 판정 (이후 평일은 미래라 목록에 없을 뿐 휴장일이 아님)
         start = datetime(year, 1, 1)
-        end = datetime(year, 12, 31)
+        end = datetime.strptime(max(biz), "%Y-%m-%d")
         holidays: set[str] = set()
         cur = start
         while cur <= end:
@@ -200,6 +204,13 @@ def next_open(market: str, now: datetime | None = None) -> datetime:
     if market == "UPBIT":
         return now or datetime.now(tz=KST)
     open_t, _close_t, tz = HOURS[market]
+    # Toss 세션이 있으면 그 정규장 시작 시각이 정확 (휴장일 반영)
+    sessions = _sessions_today(_country_for(market) or "")
+    if sessions:
+        ref = now or datetime.now(tz=KST)
+        starts = [st for (k, st, _et) in sessions if k == "regularMarket" and st > ref]
+        if starts:
+            return min(starts).astimezone(tz)
     now = (now or datetime.now(tz=tz)).astimezone(tz)
     cur = now
     for _ in range(14):  # 최대 2주 탐색
