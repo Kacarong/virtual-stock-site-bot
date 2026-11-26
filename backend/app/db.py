@@ -56,3 +56,18 @@ def init_db() -> None:
     from . import models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
+    _migrate()
+
+
+def _migrate() -> None:
+    """create_all은 기존 테이블에 컬럼을 추가하지 않으므로 필요한 컬럼만 직접 추가."""
+    if engine.dialect.name != "sqlite":
+        return
+    with engine.begin() as c:
+        cols = {r[1] for r in c.exec_driver_sql("PRAGMA table_info(orders)")}
+        if "reserve_price" not in cols:
+            try:
+                c.exec_driver_sql("ALTER TABLE orders ADD COLUMN reserve_price NUMERIC(20, 8)")
+            except Exception as e:  # API·Worker가 동시에 기동하며 먼저 추가한 경우
+                if "duplicate column" not in str(e):
+                    raise

@@ -30,6 +30,8 @@ _ERR_KO = {
     "scheduled_at required for SCHEDULED": "예약 시각이 필요합니다.",
     "order not found": "주문을 찾을 수 없습니다.",
     "order too large": "주문 수량이나 금액이 너무 큽니다.",
+    "no price": "현재 시세를 받을 수 없어 주문할 수 없습니다. 잠시 후 다시 시도하세요.",
+    "unknown reserve": "가격을 알 수 없는 대기 매수 주문이 있습니다. 그 주문을 취소한 뒤 다시 주문하세요.",
 }
 
 

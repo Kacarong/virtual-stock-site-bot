@@ -21,7 +21,7 @@ from sqlalchemy import func, update
 from sqlalchemy.orm import Session
 
 from ..db import lock_for_update
-from ..models import CashLedger, Holding, Order, Price, Symbol, Trade, User
+from ..models import CashLedger, Holding, Order, Symbol, Trade, User
 from .fees import FX_SPREAD, calc_cost, quantize_money
 from .fx import get_usdkrw
 from .market_calendar import is_market_open
@@ -97,12 +97,9 @@ async def _current_price(sym: Symbol, db: Session | None = None) -> Decimal | No
 
 # --- 매수여력 검증 ----------------------------------------------------
 
-def _pending_price(db: Session, o: Order) -> Decimal | None:
-    """미체결 주문의 예상 체결가 (지정가 우선, 없으면 최신가 캐시)."""
-    if o.limit_price:
-        return o.limit_price
-    p = db.get(Price, o.symbol_id)
-    return p.price if p and p.price else None
+def _pending_price(o: Order) -> Decimal | None:
+    """미체결 주문의 예약금 기준가. DB 시세(prices)는 믿을 수 없어 쓰지 않는다."""
+    return o.limit_price or o.reserve_price
 
 
 def _reserved_by_currency(db: Session, user: User) -> tuple[Decimal, Decimal]:
@@ -122,9 +119,10 @@ def _reserved_by_currency(db: Session, user: User) -> tuple[Decimal, Decimal]:
         ps = db.get(Symbol, o.symbol_id)
         if not ps:
             continue
-        pp = _pending_price(db, o)
+        pp = _pending_price(o)
         if pp is None:
-            continue
+            # 기준가가 없는 옛 대기 주문: 예약금을 알 수 없으니 빼고 계산하지 않고 새 매수를 막는다
+            raise OrderError("unknown reserve")
         cost = calc_cost(market=ps.market, side="BUY", price=pp, qty=o.qty).net
         if _currency(ps.market) == "USD":
             reserved_usd += cost
@@ -149,10 +147,8 @@ def _check_buying_power(
     - USD 종목: cash_usd 우선, 부족분은 cash_krw에서 환전(스프레드 1%)
     USD 대기 주문이 cash_usd를 넘는 만큼은 나중에 원화를 환전해 쓰므로 원화 예약으로 함께 잡는다
     (그렇지 않으면 같은 원화가 원화 주문과 해외 주문에 동시에 잡힌다).
-    가격을 알 수 없으면(시세 미상) 검증을 건너뛰고 체결 시점 검증에 위임.
+    price는 호출자가 확인한 양수 가격이어야 한다 (모르면 주문 자체를 거절).
     """
-    if price is None or price <= 0:
-        return
 
     est = calc_cost(market=sym.market, side="BUY", price=price, qty=qty).net
     need_krw, need_usd = _reserved_by_currency(db, user)
@@ -217,6 +213,9 @@ async def place_order(
         est_price = await _current_price(sym, db)
     if est_price is not None and est_price * qty > MAX_NOTIONAL:
         raise OrderError("order too large")
+    if side == "BUY" and est_price is None:
+        # 기준가 없이 받으면 예약금에 잡히지 않아 같은 현금으로 주문을 계속 넣을 수 있다
+        raise OrderError("no price")
     rate = await get_usdkrw()
 
     # 검증~주문 저장을 한 쓰기 잠금 안에서: 동시에 들어온 주문이 같은 잔액/보유를 함께 통과하지 못하게
@@ -252,6 +251,7 @@ async def place_order(
         order_type=order_type,
         qty=qty,
         limit_price=limit_price,
+        reserve_price=est_price if side == "BUY" else None,
         scheduled_at=scheduled_at,
         status="PENDING",
     )

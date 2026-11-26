@@ -117,6 +117,8 @@ class Order(Base):
     order_type: Mapped[str] = mapped_column(String(16))  # MARKET / LIMIT / SCHEDULED
     qty: Mapped[Decimal] = mapped_column(MONEY)
     limit_price: Mapped[Decimal | None] = mapped_column(MONEY, nullable=True)
+    # 접수 시점 예약금 기준가 (지정가, 없으면 접수 시 실시간 시세). 예약금 합산은 이 값만 쓴다.
+    reserve_price: Mapped[Decimal | None] = mapped_column(MONEY, nullable=True)
     scheduled_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     status: Mapped[str] = mapped_column(
