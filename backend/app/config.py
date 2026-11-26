@@ -8,14 +8,14 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     # 공통
-    SECRET_KEY: str = "change-me"
+    SECRET_KEY: str = ""  # 필수: openssl rand -hex 32 (비어 있거나 짧으면 기동 거부)
     DEV_LOGIN: bool = False  # 운영에선 꺼둠 (관리자 로그인으로 대체)
     INITIAL_CASH_KRW: int = 50_000_000
     ADMIN_DISCORD_IDS: str = ""  # comma-separated
 
     # 관리자 ID/PW 로그인 (Discord 없이 들어올 수 있는 단일 admin 계정)
     ADMIN_USERNAME: str = "kacarong12"
-    ADMIN_PASSWORD: str = "96574258AAaa@"
+    ADMIN_PASSWORD: str = ""  # 비어 있으면 관리자 ID/PW 로그인 비활성
 
     # DB
     DATABASE_URL: str = "sqlite:////data/papertrade.db"
@@ -44,3 +44,7 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# 빈/기본 키면 누구나 세션 쿠키(관리자 포함)를 위조할 수 있으므로 기동을 거부한다.
+if len(settings.SECRET_KEY) < 32 or settings.SECRET_KEY.startswith("change-me"):
+    raise RuntimeError("SECRET_KEY가 비어 있거나 너무 짧습니다 (.env에 openssl rand -hex 32 값 필요)")

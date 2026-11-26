@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hmac
 import secrets
+import time
 import urllib.parse
 
 import httpx
@@ -71,9 +72,25 @@ class AdminLoginBody(BaseModel):
     password: str
 
 
+# IP별 로그인 실패 기록 (단일 API 프로세스라 메모리로 충분)
+LOGIN_FAIL_LIMIT = 5
+LOGIN_FAIL_WINDOW = 15 * 60  # 초
+_login_failures: dict[str, list[float]] = {}
+
+
+def _client_ip(request: Request) -> str:
+    # cloudflared → web(Next 프록시) → api 순으로 들어오므로 원래 IP는 헤더에 있다
+    ip = request.headers.get("cf-connecting-ip")
+    if not ip:
+        xff = request.headers.get("x-forwarded-for", "")
+        ip = xff.split(",")[0].strip()
+    return ip or (request.client.host if request.client else "unknown")
+
+
 @router.post("/admin-login")
 def admin_login(
     body: AdminLoginBody,
+    request: Request,
     response: Response,
     db: Session = Depends(get_db),
 ) -> dict:
@@ -81,11 +98,24 @@ def admin_login(
 
     config의 ADMIN_USERNAME/ADMIN_PASSWORD와 일치 시 세션 발급.
     """
-    # 타이밍 공격 방지용 상수시간 비교
-    ok_user = hmac.compare_digest(body.username, settings.ADMIN_USERNAME)
-    ok_pw = hmac.compare_digest(body.password, settings.ADMIN_PASSWORD)
+    if not settings.ADMIN_PASSWORD:
+        raise HTTPException(status_code=404, detail="admin login disabled")
+
+    ip = _client_ip(request)
+    now = time.monotonic()
+    fails = [t for t in _login_failures.get(ip, []) if now - t < LOGIN_FAIL_WINDOW]
+    if len(fails) >= LOGIN_FAIL_LIMIT:
+        _login_failures[ip] = fails
+        raise HTTPException(status_code=429, detail="로그인 시도가 너무 많습니다. 15분 뒤에 다시 시도하세요")
+
+    # 타이밍 공격 방지용 상수시간 비교 (bytes로 비교해야 한글 입력도 TypeError 없이 처리)
+    ok_user = hmac.compare_digest(body.username.encode(), settings.ADMIN_USERNAME.encode())
+    ok_pw = hmac.compare_digest(body.password.encode(), settings.ADMIN_PASSWORD.encode())
     if not (ok_user and ok_pw):
+        fails.append(now)
+        _login_failures[ip] = fails
         raise HTTPException(status_code=401, detail="아이디 또는 비밀번호가 올바르지 않습니다")
+    _login_failures.pop(ip, None)
 
     user = db.query(User).filter(User.discord_id == ADMIN_DISCORD_ID).first()
     if not user:
