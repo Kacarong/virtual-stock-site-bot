@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..auth import admin_required
-from ..db import get_db
+from ..db import get_db, lock_for_update
 from ..models import CashLedger, Holding, Order, User
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -50,6 +50,7 @@ def adjust_cash(
     admin: User = Depends(admin_required),
     db: Session = Depends(get_db),
 ) -> dict:
+    lock_for_update(db, user_id)  # 체결기와 동시에 잔고를 바꿔도 덮어쓰지 않도록
     u = db.get(User, user_id)
     if not u:
         raise HTTPException(404, "user not found")

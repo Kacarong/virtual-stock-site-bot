@@ -146,17 +146,9 @@ async def on_startup() -> None:
 
     # 장 운영 세션(정규장·애프터마켓·데이마켓·프리마켓)을 주기적으로 갱신 —
     # 매매 엔진/폴러가 동기로 캐시를 읽어 거래가능 여부를 판단한다.
-    async def _session_loop() -> None:
-        from .services.market_calendar import refresh_sessions as _rs
+    from .services.market_calendar import session_refresh_loop
 
-        while True:
-            try:
-                await _aio.gather(_rs("KR"), _rs("US"), return_exceptions=True)
-            except Exception as e:
-                logger.debug("session loop failed: {}", e)
-            await _aio.sleep(600)
-
-    _aio.create_task(_session_loop())
+    _aio.create_task(session_refresh_loop())
 
     # 코인 실시간 웹소켓 (Upbit) — SSE로 브라우저에 스트리밍
     try:

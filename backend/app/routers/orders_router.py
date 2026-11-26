@@ -19,7 +19,7 @@ router = APIRouter(prefix="/orders", tags=["orders"])
 
 # 영문 OrderError 메시지 → 한글
 _ERR_KO = {
-    "insufficient holding": "해당 종목을 보유하고 있지 않습니다.",
+    "insufficient holding": "매도 가능 수량이 부족합니다 (매도 대기 주문 수량 포함).",
     "insufficient cash": "잔액이 부족합니다.",
     "insufficient KRW for FX": "환전할 원화가 부족합니다.",
     "symbol not found": "종목을 찾을 수 없습니다.",
@@ -29,6 +29,7 @@ _ERR_KO = {
     "limit_price required for LIMIT": "지정가 주문에는 가격이 필요합니다.",
     "scheduled_at required for SCHEDULED": "예약 시각이 필요합니다.",
     "order not found": "주문을 찾을 수 없습니다.",
+    "order too large": "주문 수량이나 금액이 너무 큽니다.",
 }
 
 

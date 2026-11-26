@@ -10,11 +10,11 @@ import asyncio
 from datetime import datetime
 
 from loguru import logger
-from sqlalchemy import select
+from sqlalchemy import select, union
 from sqlalchemy.orm import Session
 
 from ..db import SessionLocal
-from ..models import Holding, Price, Symbol, Watchlist
+from ..models import Holding, Order, Price, Symbol, Watchlist
 from .market_calendar import is_market_open
 from .quotes import fetch_many
 
@@ -28,13 +28,18 @@ INTERVALS = {
 
 
 def _active_codes(db: Session) -> dict[str, list[str]]:
-    """시장별 활성 종목 코드 리스트."""
+    """시장별 활성 종목 코드 리스트 (보유 ∪ 관심 ∪ 대기 주문)."""
     q = (
         select(Symbol.market, Symbol.code)
         .distinct()
         .where(
             Symbol.id.in_(
-                select(Holding.symbol_id).where(Holding.qty > 0).union(select(Watchlist.symbol_id))
+                union(
+                    select(Holding.symbol_id).where(Holding.qty > 0),
+                    select(Watchlist.symbol_id),
+                    # 대기 주문 종목도 계속 갱신해야 체결기가 새 시세로 체결한다
+                    select(Order.symbol_id).where(Order.status == "PENDING"),
+                )
             )
         )
     )

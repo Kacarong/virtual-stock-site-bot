@@ -14,6 +14,7 @@ from loguru import logger
 
 from .db import SessionLocal, init_db
 from .services.engine import match_pending_orders
+from .services.market_calendar import session_refresh_loop
 from .services.price_poller import run_pollers
 from .services.symbol_sync import sync_all
 
@@ -51,8 +52,9 @@ async def main() -> None:
     except Exception as e:
         logger.warning("initial sync failed: {}", e)
 
-    # 폴러 + 매처 동시 실행
+    # 폴러 + 매처 + 장 세션 갱신 동시 실행 (세션이 없으면 정규장으로 폴백 → API와 판단이 어긋남)
     await asyncio.gather(
+        session_refresh_loop(),
         run_pollers(),
         matcher_loop(),
     )

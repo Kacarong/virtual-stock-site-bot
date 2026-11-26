@@ -67,6 +67,18 @@ async def refresh_sessions(country: str) -> None:
         logger.debug("session refresh {} failed: {}", country, e)
 
 
+async def session_refresh_loop() -> None:
+    """세션 캐시 주기 갱신. API와 Worker(체결기·폴러) 둘 다 돌려야 같은 기준으로 장 여부를 판단한다."""
+    import asyncio
+
+    while True:
+        try:
+            await asyncio.gather(refresh_sessions("KR"), refresh_sessions("US"), return_exceptions=True)
+        except Exception as e:
+            logger.debug("session loop failed: {}", e)
+        await asyncio.sleep(600)
+
+
 def _sessions_today(country: str) -> list | None:
     e = _session_cache.get(country)
     if e and e[0] == _today_kst_str():

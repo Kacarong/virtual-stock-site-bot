@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func as sa_func
 
 from ..auth import current_user
-from ..db import get_db
+from ..db import get_db, lock_for_update
 from ..models import CashLedger, Holding, Order, Price, Symbol, Trade, User
 from ..services.fees import FX_SPREAD, fx_buy_usd, fx_sell_usd, quantize_money
 from ..services.fx import get_usdkrw
@@ -37,6 +37,8 @@ async def fx_swap(
     """원화↔달러 환전. 스프레드 1% (실거래 엔진과 동일)."""
     rate = await get_usdkrw()
     amt = quantize_money(body.amount)
+    # 잔고를 잠근 뒤 다시 읽는다: 그 사이 체결기가 바꾼 잔고를 옛 값으로 덮어쓰지 않도록
+    lock_for_update(db, user.id)
 
     if body.direction == "KRW_TO_USD":
         if user.cash_krw < amt:
