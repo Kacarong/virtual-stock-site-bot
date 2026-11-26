@@ -79,7 +79,9 @@ _login_failures: dict[str, list[float]] = {}
 
 
 def _client_ip(request: Request) -> str:
-    # cloudflared → web(Next 프록시) → api 순으로 들어오므로 원래 IP는 헤더에 있다
+    # cloudflared → web(Next 프록시) → api 순으로 들어오므로 원래 IP는 헤더에 있다.
+    # 헤더를 믿을 수 있는 건 web/api 포트가 127.0.0.1에만 열려 있어서(docker-compose.yml)
+    # 외부 요청은 반드시 Cloudflare를 거치고, Cloudflare가 CF-Connecting-IP를 덮어쓰기 때문이다.
     ip = request.headers.get("cf-connecting-ip")
     if not ip:
         xff = request.headers.get("x-forwarded-for", "")
@@ -98,7 +100,8 @@ def admin_login(
 
     config의 ADMIN_USERNAME/ADMIN_PASSWORD와 일치 시 세션 발급.
     """
-    if not settings.ADMIN_PASSWORD:
+    pw = settings.ADMIN_PASSWORD
+    if len(pw) < 12 or pw.startswith("change-me"):  # 비었거나 약하거나 예제 값이면 비활성
         raise HTTPException(status_code=404, detail="admin login disabled")
 
     ip = _client_ip(request)
