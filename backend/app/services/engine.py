@@ -12,7 +12,8 @@ trigger_scheduled_orders: 예약 주문 트리거 (Worker 1초 틱)
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, timezone
+import time
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from loguru import logger
@@ -24,12 +25,12 @@ from ..models import CashLedger, Holding, Order, Price, Symbol, Trade, User
 from .fees import FX_SPREAD, calc_cost, quantize_money
 from .fx import get_usdkrw
 from .market_calendar import is_market_open
-from .quotes import fetch_one
+from .sources import kis, toss, upbit
 
 ZERO = Decimal("0")
 
-# 체결에 쓰는 DB 시세의 최대 나이. 넘으면 소스에서 새로 받는다 (오래된 가격 체결 방지).
-MAX_PRICE_AGE = timedelta(seconds=15)
+# 체결용 실시간 시세 캐시 유지 시간(초)
+EXEC_QUOTE_TTL = 3.0
 # MONEY = Numeric(20, 8) → 정수부 12자리. 넘으면 quantize에서 InvalidOperation.
 MAX_QTY = Decimal("1000000000")            # 10억 주/개
 MAX_NOTIONAL = Decimal("100000000000")     # 주문 금액 1천억 (해당 통화)
@@ -45,35 +46,52 @@ def _currency(market: str) -> str:
     return "KRW"
 
 
-async def _current_price(sym: Symbol, db: Session) -> Decimal | None:
-    """체결용 현재가. DB 시세가 MAX_PRICE_AGE 이내면 그대로, 아니면 소스에서 새로 받아 DB에 반영.
+# 체결용 실시간 시세 캐시: (market, code) → (monotonic ts, price). 체결기가 1초마다 같은 종목을 묻는 것을 흡수.
+_exec_quotes: dict[tuple[str, str], tuple[float, Decimal]] = {}
 
-    새 시세를 못 받으면 None (오래된 값으로 체결하지 않는다).
+
+async def _realtime_price(market: str, code: str) -> Decimal | None:
+    """실시간 소스만 조회. 일봉/종가 폴백(pykrx·Stooq·yfinance)은 쓰지 않는다."""
+    if market == "UPBIT":
+        q = (await upbit.fetch_prices([code])).get(code)
+        return q["price"] if q else None
+    if market == "KRX":
+        p = (await toss._fetch_last_prices([code])).get(code)
+        if p is None:
+            q = await kis.fetch_price(code)
+            p = q["price"] if q else None
+        return p
+    if market in ("NASDAQ", "NYSE", "AMEX"):
+        p = (await toss._fetch_last_prices([code])).get(code)
+        if p is None:
+            q = await kis.fetch_overseas_price(code, market)
+            p = q["price"] if q else None
+        return p
+    return None
+
+
+async def _current_price(sym: Symbol, db: Session | None = None) -> Decimal | None:
+    """체결용 현재가 (실시간 소스, 최대 EXEC_QUOTE_TTL초 캐시). 못 받으면 None → 체결하지 않는다.
+
+    DB prices 테이블은 쓰지 않는다: 인기목록·업종 화면이 일봉 폴백 값도 ts=now로 저장해
+    시각만으로는 실시간 시세인지 알 수 없다.
     """
-    p = db.get(Price, sym.id)
-    now = datetime.utcnow()
-    if p and p.price and p.ts and now - p.ts <= MAX_PRICE_AGE:
-        return p.price
+    key = (sym.market, sym.code)
+    now = time.monotonic()
+    cached = _exec_quotes.get(key)
+    if cached and now - cached[0] <= EXEC_QUOTE_TTL:
+        return cached[1]
     try:
-        q = await asyncio.wait_for(fetch_one(sym.market, sym.code), timeout=5)
+        price = await asyncio.wait_for(_realtime_price(sym.market, sym.code), timeout=5)
     except Exception as e:
-        logger.warning("fresh quote failed {}/{}: {}", sym.market, sym.code, e)
-        q = None
-    if not q or not q.get("price"):
+        logger.warning("realtime quote failed {}/{}: {}", sym.market, sym.code, e)
         return None
-    price = Decimal(str(q["price"]))
+    if price is None:
+        return None
+    price = Decimal(str(price))
     if price <= 0:
         return None
-    prev = q.get("prev_close")
-    if p:
-        p.price = price
-        if prev is not None:
-            p.prev_close = Decimal(str(prev))
-        p.ts = now
-    else:
-        db.add(Price(symbol_id=sym.id, price=price,
-                     prev_close=Decimal(str(prev)) if prev is not None else None, ts=now))
-    db.commit()
+    _exec_quotes[key] = (now, price)
     return price
 
 
