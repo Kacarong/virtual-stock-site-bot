@@ -356,6 +356,7 @@ export default function SymbolPage({
           {candles && candles.length > 0 ? (
             <Chart
               data={candles}
+              viewKey={`${market}/${code}/${tf}`}
               priceScale={isUS && showKrw && rate ? rate : 1}
               unitLabel={
                 isUS

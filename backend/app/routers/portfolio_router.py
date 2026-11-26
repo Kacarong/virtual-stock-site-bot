@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 from decimal import Decimal
 from typing import Literal
 
@@ -352,7 +353,11 @@ async def realized(
     buckets: dict[str, Decimal] = defaultdict(lambda: Decimal("0"))
     total = Decimal("0")
 
+    kst = ZoneInfo("Asia/Seoul")
+
     def bucket_key(dt: datetime) -> str:
+        # executed_at은 naive UTC → 한국 날짜로 묶는다 (오전 9시 전 거래가 전날로 잡히던 문제)
+        dt = dt.replace(tzinfo=timezone.utc).astimezone(kst)
         if period == "daily":
             return dt.strftime("%Y-%m-%d")
         if period == "monthly":
@@ -385,10 +390,11 @@ async def realized(
 
     # 일별/월별 — 최근 결과 위로 정렬
     cutoff = None
+    now_kst = datetime.now(kst)
     if period == "daily":
-        cutoff = (datetime.utcnow() - timedelta(days=365)).strftime("%Y-%m-%d")
+        cutoff = (now_kst - timedelta(days=365)).strftime("%Y-%m-%d")
     elif period == "monthly":
-        cutoff = (datetime.utcnow() - timedelta(days=365 * 3)).strftime("%Y-%m")
+        cutoff = (now_kst - timedelta(days=365 * 3)).strftime("%Y-%m")
 
     items = [
         {"bucket": k, "realized_krw": str(v)}

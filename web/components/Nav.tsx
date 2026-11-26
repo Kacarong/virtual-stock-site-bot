@@ -37,17 +37,18 @@ export function Nav() {
 
   return (
     <nav className="sticky top-0 z-10 border-b border-bg-3 bg-bg-1/80 backdrop-blur">
-      <div className="flex w-full items-center justify-between px-6 py-3">
-        <Link href="/" className="text-lg font-bold text-ink-1">
+      {/* 좁은 화면에선 메뉴가 둘째 줄로 내려가고 가로 스크롤 (글자가 세로로 쪼개지던 문제) */}
+      <div className="flex w-full flex-wrap items-center justify-between gap-y-2 px-4 py-3 sm:px-6">
+        <Link href="/" className="shrink-0 text-lg font-bold text-ink-1">
           papertrade
         </Link>
-        <div className="flex items-center gap-1">
+        <div className="flex max-w-full items-center gap-1 overflow-x-auto whitespace-nowrap">
           <ThemeToggle />
           {tabs.map((t) => (
             <Link
               key={t.href}
               href={t.href}
-              className={`rounded-lg px-3 py-1.5 text-sm transition ${
+              className={`shrink-0 rounded-lg px-3 py-1.5 text-sm transition ${
                 path === t.href
                   ? "bg-brand text-brand-fg"
                   : "text-ink-2 hover:bg-bg-2"
@@ -59,7 +60,7 @@ export function Nav() {
           {me?.is_admin && (
             <Link
               href="/admin"
-              className={`rounded-lg px-3 py-1.5 text-sm transition ${
+              className={`shrink-0 rounded-lg px-3 py-1.5 text-sm transition ${
                 path === "/admin"
                   ? "bg-brand text-brand-fg"
                   : "text-ink-2 hover:bg-bg-2"
@@ -71,14 +72,14 @@ export function Nav() {
           {me ? (
             <button
               onClick={logout}
-              className="ml-2 rounded-lg border border-bg-3 px-3 py-1.5 text-sm text-ink-2 hover:bg-bg-2"
+              className="ml-2 shrink-0 rounded-lg border border-bg-3 px-3 py-1.5 text-sm text-ink-2 hover:bg-bg-2"
             >
               로그아웃
             </button>
           ) : (
             <Link
               href="/login"
-              className="ml-2 rounded-lg bg-brand px-3 py-1.5 text-sm font-semibold text-brand-fg"
+              className="ml-2 shrink-0 rounded-lg bg-brand px-3 py-1.5 text-sm font-semibold text-brand-fg"
             >
               로그인
             </Link>

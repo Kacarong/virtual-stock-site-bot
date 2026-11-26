@@ -349,8 +349,8 @@ export function LiveDashboard() {
   // 코인은 시가총액·산업 컬럼 제외 → 그리드 트랙도 시장별로 다르게
   const isUpbit = market === "UPBIT";
   const gridCols = isUpbit
-    ? "grid-cols-[28px_32px_1fr_110px_90px] sm:grid-cols-[28px_32px_1fr_120px_90px_110px] lg:grid-cols-[28px_32px_1fr_120px_90px_110px_120px]"
-    : "grid-cols-[28px_32px_1fr_110px_90px_100px] sm:grid-cols-[28px_32px_1fr_120px_90px_110px_110px] lg:grid-cols-[28px_32px_1fr_120px_90px_110px_110px_120px] xl:grid-cols-[28px_32px_1fr_120px_90px_110px_110px_120px_130px]";
+    ? "grid-cols-[24px_24px_1fr_96px_64px] sm:grid-cols-[28px_32px_1fr_120px_90px_110px] lg:grid-cols-[28px_32px_1fr_120px_90px_110px_120px]"
+    : "grid-cols-[24px_24px_1fr_96px_64px] sm:grid-cols-[28px_32px_1fr_120px_90px_110px_110px] lg:grid-cols-[28px_32px_1fr_120px_90px_110px_110px_120px] xl:grid-cols-[28px_32px_1fr_120px_90px_110px_110px_120px_130px]";
 
   return (
     <div>
@@ -422,14 +422,14 @@ export function LiveDashboard() {
 
       {/* 랭킹 테이블 */}
       <div className="overflow-hidden rounded-2xl border border-bg-3 bg-bg-1">
-        <div className={`grid ${gridCols} items-center gap-2 border-b border-bg-3 px-4 py-3 text-xs text-ink-3`}>
+        <div className={`grid ${gridCols} items-center gap-2 border-b border-bg-3 px-3 py-3 text-xs text-ink-3 sm:px-4`}>
           <div />
           <div>순위</div>
           <div>종목</div>
           <div className="text-right">현재가</div>
           <div className="text-right">등락률</div>
           <div className="hidden text-right sm:block">거래대금</div>
-          {!isUpbit && <div className="text-right">시가총액</div>}
+          {!isUpbit && <div className="hidden text-right sm:block">시가총액</div>}
           <div className="hidden text-center lg:block">거래 비율</div>
           {!isUpbit && <div className="hidden xl:block">산업</div>}
         </div>
@@ -454,7 +454,7 @@ export function LiveDashboard() {
             <Link
               key={`${row.market}-${row.code}`}
               href={`/symbols/${row.market}/${encodeURIComponent(row.code)}`}
-              className={`grid ${gridCols} items-center gap-2 border-b border-bg-3 px-4 py-3 text-sm transition last:border-0 hover:bg-bg-2`}
+              className={`grid ${gridCols} items-center gap-2 border-b border-bg-3 px-3 py-3 text-sm transition last:border-0 hover:bg-bg-2 sm:px-4`}
             >
               <span
                 role="button"
@@ -469,7 +469,10 @@ export function LiveDashboard() {
               </span>
               <div className="text-ink-3">{i + 1}</div>
               <div className="flex min-w-0 items-center gap-2.5">
-                <Logo row={row} />
+                {/* 좁은 화면에선 로고를 숨겨 종목명 자리를 확보 */}
+                <div className="hidden shrink-0 sm:block">
+                  <Logo row={row} />
+                </div>
                 <div className="min-w-0">
                   <div className="truncate font-medium text-ink-1">
                     {row.name}
@@ -491,7 +494,7 @@ export function LiveDashboard() {
                 {fmtCompact(row.value)}
               </div>
               {!isUpbit && (
-                <div className="text-right text-ink-3">
+                <div className="hidden text-right text-ink-3 sm:block">
                   {fmtCompact(row.market_cap)}
                 </div>
               )}
@@ -530,7 +533,7 @@ export function LiveDashboard() {
       </div>
 
       <p className="mt-4 text-center text-xs text-ink-4">
-        시세·랭킹·로고 제공: 토스증권 · 5초마다 자동 갱신
+        시세·랭킹·로고 제공: 토스증권 · 2초마다 자동 갱신
       </p>
     </div>
   );

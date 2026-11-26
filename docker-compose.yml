@@ -1,7 +1,9 @@
 services:
   api:
     build: ./backend
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    # --reload 없이 운영: 파일을 고치는 도중 자동 재시작돼 API가 죽는 일을 막는다.
+    # 코드 반영은 `docker --context default compose restart api`. 워커는 1개(로그인 실패 제한이 메모리 기반).
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
     env_file: .env
     environment:
       - PYTHONUNBUFFERED=1

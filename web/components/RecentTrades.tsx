@@ -1,7 +1,7 @@
 "use client";
 
 import useSWR from "swr";
-import { api } from "@/lib/api";
+import { api, fmtSmart } from "@/lib/api";
 
 type Trade = { price: number; volume: number; timestamp: string | null };
 
@@ -9,9 +9,14 @@ const fetcher = (u: string) => api(u);
 
 function fmtP(v: number, market: string): string {
   if (!isFinite(v)) return "-";
-  if (market === "KRX" || market === "UPBIT")
-    return Math.round(v).toLocaleString();
+  if (market === "UPBIT") return fmtSmart(v); // 코인은 가격대별 소수점 (1원 미만 코인이 0으로 보이던 문제)
+  if (market === "KRX") return Math.round(v).toLocaleString();
   return v.toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+// 코인 수량은 크기별 소수점 (기본 3자리면 0.0001 BTC가 0으로 보인다)
+function fmtV(v: number, market: string): string {
+  return market === "UPBIT" ? fmtSmart(v) : v.toLocaleString();
 }
 
 function fmtT(ts: string | null): string {
@@ -76,7 +81,7 @@ export function RecentTrades({
                       {fmtP(t.price, market)}
                     </td>
                     <td className="py-1 text-right text-ink-3">
-                      {t.volume.toLocaleString()}
+                      {fmtV(t.volume, market)}
                     </td>
                   </tr>
                 );

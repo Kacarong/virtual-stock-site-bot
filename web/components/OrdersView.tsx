@@ -55,11 +55,11 @@ export function OrdersView() {
       </div>
 
       {tab === "trades" ? (
-        <div className="overflow-hidden rounded-2xl bg-bg-1 shadow-sm">
+        <div className="overflow-x-auto rounded-2xl bg-bg-1 shadow-sm">
           {!trades?.length ? (
             <div className="p-8 text-center text-sm text-ink-3">체결 내역 없음</div>
           ) : (
-            <table className="w-full text-sm">
+            <table className="w-full whitespace-nowrap text-sm">
               <thead className="bg-bg-2 text-xs text-ink-3">
                 <tr>
                   <th className="px-4 py-2 text-left">시각</th>
@@ -96,11 +96,11 @@ export function OrdersView() {
           )}
         </div>
       ) : (
-        <div className="overflow-hidden rounded-2xl bg-bg-1 shadow-sm">
+        <div className="overflow-x-auto rounded-2xl bg-bg-1 shadow-sm">
           {!orders?.length ? (
             <div className="p-8 text-center text-sm text-ink-3">주문 없음</div>
           ) : (
-            <table className="w-full text-sm">
+            <table className="w-full whitespace-nowrap text-sm">
               <thead className="bg-bg-2 text-xs text-ink-3">
                 <tr>
                   <th className="px-4 py-2 text-left">시각</th>

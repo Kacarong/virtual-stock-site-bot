@@ -29,6 +29,8 @@ type Props = {
   livePrice?: number;
   /** 봉 간격(초). 분/5분/1시간봉이면 시간 넘어갈 때 새 봉 생성. 일봉 등은 미지정. */
   intervalSec?: number;
+  /** 종목·봉 단위 식별자. 같으면 데이터 갱신 때 보던 확대/스크롤 위치를 유지, 바뀌면 전체 맞춤. */
+  viewKey?: string;
 };
 
 export function Chart({
@@ -38,6 +40,7 @@ export function Chart({
   integerOnly,
   livePrice,
   intervalSec,
+  viewKey,
 }: Props) {
   const ref = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -50,6 +53,8 @@ export function Chart({
     close: number;
   } | null>(null);
   const [isDark, setIsDark] = useState(false);
+  // 차트를 다시 만들 때 복원할 보던 구간 (atEnd=최신 봉을 보고 있었는지)
+  const viewRef = useRef<{ key?: string; range: any; atEnd: boolean } | null>(null);
 
   // 다크모드 감지 (<html>.dark 클래스) — 토글 시 차트 색도 갱신
   useEffect(() => {
@@ -167,13 +172,23 @@ export function Chart({
       );
     }
 
-    chart.timeScale().fitContent();
+    const saved = viewRef.current;
+    if (saved && saved.key === viewKey && saved.range) {
+      // 같은 종목·봉의 주기 갱신: 보던 구간 유지, 최신 봉을 보고 있었으면 계속 최신으로
+      chart.timeScale().setVisibleRange(saved.range);
+      if (saved.atEnd) chart.timeScale().scrollToRealTime();
+    } else {
+      chart.timeScale().fitContent();
+    }
+    const lastTime = scaled.length ? Number(scaled[scaled.length - 1].time) : 0;
     return () => {
+      const range = chart.timeScale().getVisibleRange();
+      viewRef.current = { key: viewKey, range, atEnd: !!range && Number(range.to) >= lastTime };
       chart.remove();
       chartRef.current = null;
       candleRef.current = null;
     };
-  }, [data, priceScale, unitLabel, integerOnly, isDark]);
+  }, [data, priceScale, unitLabel, integerOnly, isDark, viewKey]);
 
   // 실시간 현재가로 봉 갱신 (전체 재생성 없이 update만).
   // 분/5분/1시간봉이면 시간이 다음 봉으로 넘어갈 때 새 봉을 append.

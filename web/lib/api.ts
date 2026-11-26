@@ -14,10 +14,19 @@ export function isUnauthorized(e: unknown): boolean {
   return (e as any)?.status === 401;
 }
 
+// 401을 받은 GET 경로. 비로그인 방문자가 모든 페이지에서 1~5초마다 로그인 필요 API를 계속
+// 호출하던 문제 → 같은 경로는 다시 보내지 않고 바로 401로 처리한다.
+// 로그인·로그아웃은 전체 페이지 이동(window.location)이라 이 기록도 그때 초기화된다.
+const unauthorizedPaths = new Set<string>();
+
 export async function api<T = any>(
   path: string,
   init?: RequestInit
 ): Promise<T> {
+  const isGet = !init?.method || init.method.toUpperCase() === "GET";
+  if (isGet && unauthorizedPaths.has(path)) {
+    throw new ApiError(401, "not authenticated");
+  }
   const r = await fetch(`/api${path}`, {
     credentials: "include",
     headers: {
@@ -32,6 +41,7 @@ export async function api<T = any>(
       const j = await r.json();
       msg = j.detail || msg;
     } catch {}
+    if (r.status === 401 && isGet) unauthorizedPaths.add(path);
     throw new ApiError(r.status, msg);
   }
   if (r.status === 204) return undefined as T;

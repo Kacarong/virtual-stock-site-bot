@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import useSWR from "swr";
-import { api, fmtKRW, fmtUSD } from "@/lib/api";
+import { api, fmtKRW, fmtUSD, isUnauthorized } from "@/lib/api";
+import { LoginRequired } from "@/components/LoginRequired";
 
 const fetcher = (u: string) => api(u);
 
@@ -20,8 +21,10 @@ export default function Admin() {
   const [grantAmount, setGrantAmount] = useState("");
   const [granting, setGranting] = useState(false);
 
-  if (error?.message?.includes("403")) {
-    return <div className="p-8 text-center text-sm text-red-600">관리자 권한 필요</div>;
+  // 메시지(detail="admin only")에는 "403"이 없으므로 HTTP 상태로 판단해야 한다
+  if (isUnauthorized(error)) return <LoginRequired message="관리자 페이지는 로그인이 필요합니다." />;
+  if (error?.status === 403) {
+    return <div className="p-8 text-center text-sm text-red-600">관리자 권한이 필요합니다.</div>;
   }
 
   async function grant() {
