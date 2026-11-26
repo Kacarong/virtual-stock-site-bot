@@ -17,9 +17,14 @@ export function Nav() {
   const [me, setMe] = useState<Me | null>(null);
 
   useEffect(() => {
-    api<Me>("/auth/me")
-      .then(setMe)
-      .catch(() => setMe(null));
+    const load = () =>
+      api<Me>("/auth/me")
+        .then(setMe)
+        .catch(() => setMe(null));
+    load();
+    // 다른 탭에서 로그인·로그아웃했을 수 있으니 탭으로 돌아오면 다시 확인
+    window.addEventListener("focus", load);
+    return () => window.removeEventListener("focus", load);
   }, [path]);
 
   async function logout() {

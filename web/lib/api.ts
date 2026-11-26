@@ -19,6 +19,16 @@ export function isUnauthorized(e: unknown): boolean {
 // 로그인·로그아웃은 전체 페이지 이동(window.location)이라 이 기록도 그때 초기화된다.
 const unauthorizedPaths = new Set<string>();
 
+// 탭으로 돌아오면(다른 탭에서 로그인했을 수 있음) 기록을 지워 다시 확인하게 한다.
+// capture 단계로 등록해 SWR의 포커스 재검증보다 먼저 지워지게 한다.
+if (typeof window !== "undefined") {
+  const reset = () => {
+    if (document.visibilityState === "visible") unauthorizedPaths.clear();
+  };
+  window.addEventListener("focus", reset, { capture: true });
+  document.addEventListener("visibilitychange", reset, { capture: true });
+}
+
 export async function api<T = any>(
   path: string,
   init?: RequestInit
