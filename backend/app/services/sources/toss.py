@@ -14,8 +14,11 @@ TOSS_CLIENT_ID / TOSS_CLIENT_SECRET 미설정 시 모든 호출은 graceful None
 from __future__ import annotations
 
 import asyncio
+import json
+import os
 import time
 from datetime import datetime
+from pathlib import Path
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -43,18 +46,46 @@ def _unwrap(data):
 
 
 # --- 토큰 캐시 -------------------------------------------------------
+# Toss는 client당 토큰이 하나만 유효하다: 새로 발급하면 이전 토큰은 즉시 401.
+# API·Worker가 각자 발급하면 늦게 뜬 쪽만 살고 다른 쪽은 최대 24시간 401 → 폴백(지연 시세)으로 떨어진다.
+# 그래서 /data(두 컨테이너 공유)의 파일로 토큰을 공유하고, 401이면 파일을 다시 읽거나 새로 발급한다.
 
 _token_cache: dict = {"token": None, "exp": 0.0}
 _token_lock = asyncio.Lock()
+_TOKEN_FILE = Path("/data/toss_token.json")
 
 
-async def get_access_token() -> str | None:
+def _read_shared_token() -> tuple[str, float] | None:
+    try:
+        d = json.loads(_TOKEN_FILE.read_text())
+        return d["token"], float(d["exp"])
+    except Exception:
+        return None
+
+
+def _write_shared_token(token: str, exp: float) -> None:
+    try:
+        tmp = _TOKEN_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"token": token, "exp": exp}))
+        os.chmod(tmp, 0o600)
+        tmp.replace(_TOKEN_FILE)
+    except Exception as e:
+        logger.warning("Toss token share write failed: {}", e)
+
+
+async def get_access_token(rejected: str | None = None) -> str | None:
+    """유효 토큰. rejected=401을 받은 토큰이면 그 토큰은 다시 쓰지 않는다."""
     if not _configured():
         return None
     async with _token_lock:
         now = time.time()
-        if _token_cache["token"] and _token_cache["exp"] > now + 60:
-            return _token_cache["token"]
+        tok = _token_cache["token"]
+        if tok and tok != rejected and _token_cache["exp"] > now + 60:
+            return tok
+        shared = _read_shared_token()  # 다른 프로세스가 새로 발급했을 수 있다
+        if shared and shared[0] != rejected and shared[1] > now + 60:
+            _token_cache["token"], _token_cache["exp"] = shared
+            return shared[0]
         try:
             async with httpx.AsyncClient(timeout=10) as c:
                 r = await c.post(
@@ -70,14 +101,15 @@ async def get_access_token() -> str | None:
                 data = r.json()
                 _token_cache["token"] = data["access_token"]
                 _token_cache["exp"] = now + int(data.get("expires_in", 3600))
+                _write_shared_token(_token_cache["token"], _token_cache["exp"])
                 return _token_cache["token"]
         except Exception as e:
             logger.warning("Toss token issue failed: {}", e)
             return None
 
 
-async def _auth_headers() -> dict | None:
-    t = await get_access_token()
+async def _auth_headers(rejected: str | None = None) -> dict | None:
+    t = await get_access_token(rejected)
     if not t:
         return None
     return {"Authorization": f"Bearer {t}"}
@@ -117,6 +149,12 @@ async def _authed_get(path: str, params: dict, *, retries: int = 2):
             except Exception as e:
                 logger.debug("Toss GET {} error: {}", path, e)
                 return None
+        if r.status_code == 401 and attempt < retries:
+            # 다른 프로세스가 토큰을 새로 받아 우리 토큰이 무효가 됨 → 공유 토큰/재발급으로 1회 재시도
+            headers = await _auth_headers(rejected=headers["Authorization"][7:])
+            if not headers:
+                return None
+            continue
         if r.status_code == 429:
             if attempt < retries:
                 await asyncio.sleep(delay)

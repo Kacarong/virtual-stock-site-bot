@@ -5,13 +5,13 @@
 - UPBIT: 24/7
 
 is_market_open(market) → True/False
-is_trading_day(market, date) → True/False
+is_trading_day(market, date) → True/False/None(일정 모름)
 next_open(market) → datetime
 """
 from __future__ import annotations
 
 from datetime import datetime, time, timedelta
-from functools import lru_cache
+import time as _time
 from zoneinfo import ZoneInfo
 
 from loguru import logger
@@ -107,81 +107,96 @@ def market_session(market: str, now: datetime | None = None) -> str | None:
 
 # --- 휴장일 ----------------------------------------------------------
 
-@lru_cache(maxsize=4)
-def _krx_holidays_year(year: int) -> set[str]:
-    """pykrx로 KRX 휴장일 추출. 실패 시 빈 set."""
+# (market, year) → (monotonic ts, 결과). 성공은 계속, 실패(None)는 1시간 뒤 재시도.
+_cal_cache: dict[tuple[str, int], tuple[float, object]] = {}
+_CAL_RETRY = 3600.0
+
+
+def _cached_calendar(market: str, year: int, load):
+    key = (market, year)
+    hit = _cal_cache.get(key)
+    if hit and (hit[1] is not None or _time.monotonic() - hit[0] < _CAL_RETRY):
+        return hit[1]
+    val = load(year)
+    _cal_cache[key] = (_time.monotonic(), val)
+    return val
+
+
+def _holidays_between(biz: set[str], start: datetime, end: datetime) -> set[str]:
+    """start~end 평일 중 영업일 목록에 없는 날 = 휴장일."""
+    holidays: set[str] = set()
+    cur = start
+    while cur <= end:
+        if cur.weekday() < 5:
+            ds = cur.strftime("%Y-%m-%d")
+            if ds not in biz:
+                holidays.add(ds)
+        cur += timedelta(days=1)
+    return holidays
+
+
+def _load_krx_calendar(year: int) -> tuple[set[str], str] | None:
+    """pykrx로 KRX (휴장일, 확인된 마지막 날짜). 조회 실패·빈 결과면 None(= 일정 모름)."""
     try:
         from .sources.kis import _patch_requests_for_krx
         _patch_requests_for_krx()
         from pykrx import stock  # type: ignore
 
-        # pykrx는 영업일 리스트를 주므로 전체 일자 차집합으로 휴장일 산출
         days = stock.get_previous_business_days(year=year)  # KRX 영업일 (오늘까지만 나온다)
         biz = {d.strftime("%Y-%m-%d") for d in days}
-        if not biz:
-            # 조회 실패 시 모든 평일을 휴장일로 잘못 판단하지 않도록 비워 둔다
-            logger.warning("pykrx business days empty for {}", year)
-            return set()
-        # 영업일 목록이 끝나는 날까지만 판정 (이후 평일은 미래라 목록에 없을 뿐 휴장일이 아님)
-        start = datetime(year, 1, 1)
-        end = datetime.strptime(max(biz), "%Y-%m-%d")
-        holidays: set[str] = set()
-        cur = start
-        while cur <= end:
-            if cur.weekday() < 5:  # 평일
-                ds = cur.strftime("%Y-%m-%d")
-                if ds not in biz:
-                    holidays.add(ds)
-            cur += timedelta(days=1)
-        return holidays
     except Exception as e:
         logger.warning("pykrx holiday load failed: {}", e)
-        return set()
+        return None
+    if not biz:
+        logger.warning("pykrx business days empty for {}", year)
+        return None
+    last = max(biz)
+    return _holidays_between(biz, datetime(year, 1, 1), datetime.strptime(last, "%Y-%m-%d")), last
 
 
-@lru_cache(maxsize=4)
-def _us_holidays_year(year: int) -> set[str]:
-    """pandas_market_calendars로 NYSE 휴장일."""
+def _load_us_calendar(year: int) -> tuple[set[str], str] | None:
+    """pandas_market_calendars로 NYSE (휴장일, 확인된 마지막 날짜). 실패 시 None."""
     try:
         import pandas_market_calendars as mcal  # type: ignore
 
         cal = mcal.get_calendar("NYSE")
         sched = cal.schedule(start_date=f"{year}-01-01", end_date=f"{year}-12-31")
         biz = {d.strftime("%Y-%m-%d") for d in sched.index}
-        start = datetime(year, 1, 1)
-        end = datetime(year, 12, 31)
-        holidays: set[str] = set()
-        cur = start
-        while cur <= end:
-            if cur.weekday() < 5:
-                ds = cur.strftime("%Y-%m-%d")
-                if ds not in biz:
-                    holidays.add(ds)
-            cur += timedelta(days=1)
-        return holidays
     except Exception as e:
         logger.warning("us holiday load failed: {}", e)
-        return set()
+        return None
+    if not biz:
+        return None
+    return _holidays_between(biz, datetime(year, 1, 1), datetime(year, 12, 31)), f"{year}-12-31"
 
 
-def is_trading_day(market: str, day: datetime) -> bool:
+def is_trading_day(market: str, day: datetime) -> bool | None:
+    """영업일이면 True, 휴장일이면 False, 일정을 확인할 수 없으면 None."""
     if market == "UPBIT":
         return True
     if day.weekday() >= 5:  # 주말
         return False
     ds = day.strftime("%Y-%m-%d")
     if market == "KRX":
-        return ds not in _krx_holidays_year(day.year)
-    if market in ("NASDAQ", "NYSE"):
-        return ds not in _us_holidays_year(day.year)
-    return True
+        cal = _cached_calendar("KRX", day.year, _load_krx_calendar)
+    elif market in ("NASDAQ", "NYSE"):
+        cal = _cached_calendar("US", day.year, _load_us_calendar)
+    else:
+        return True
+    if cal is None:
+        return None
+    holidays, last = cal
+    if ds > last:
+        return None  # 확인된 범위 밖
+    return ds not in holidays
 
 
 def is_market_open(market: str, now: datetime | None = None) -> bool:
     """거래 가능 시간인지. Toss 세션(정규장·애프터마켓·데이마켓·프리마켓) 기준.
 
     Toss 세션 데이터가 있으면 그 중 아무 세션에 속하면 거래가능으로 본다.
-    데이터가 없으면 기존 하드코딩 정규장 시간으로 폴백.
+    데이터가 없으면 정규장 시간으로 폴백하되, 영업일인지 확인할 수 없으면 닫힌 것으로 본다
+    (공휴일에 체결되지 않도록).
     """
     if market == "UPBIT":
         return True
@@ -194,7 +209,7 @@ def is_market_open(market: str, now: datetime | None = None) -> bool:
     open_t, close_t, tz = HOURS[market]
     now = now or datetime.now(tz=tz)
     local = now.astimezone(tz)
-    if not is_trading_day(market, local):
+    if is_trading_day(market, local) is not True:
         return False
     return open_t <= local.time() <= close_t
 
@@ -214,12 +229,13 @@ def next_open(market: str, now: datetime | None = None) -> datetime:
     now = (now or datetime.now(tz=tz)).astimezone(tz)
     cur = now
     for _ in range(14):  # 최대 2주 탐색
-        if is_trading_day(market, cur) and cur.time() < open_t:
+        # 일정을 모르면(None) 평일은 개장으로 추정 — 예약 시각 추정용, 실제 체결은 is_market_open이 막는다
+        if is_trading_day(market, cur) is not False and cur.time() < open_t:
             return cur.replace(hour=open_t.hour, minute=open_t.minute, second=0, microsecond=0)
         # 다음 날 09:00로 이동
         cur = (cur + timedelta(days=1)).replace(
             hour=open_t.hour, minute=open_t.minute, second=0, microsecond=0
         )
-        if is_trading_day(market, cur):
+        if is_trading_day(market, cur) is not False:
             return cur
     return cur  # fallback

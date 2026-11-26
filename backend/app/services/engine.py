@@ -98,8 +98,13 @@ async def _current_price(sym: Symbol, db: Session | None = None) -> Decimal | No
 # --- 매수여력 검증 ----------------------------------------------------
 
 def _pending_price(o: Order) -> Decimal | None:
-    """미체결 주문의 예약금 기준가. DB 시세(prices)는 믿을 수 없어 쓰지 않는다."""
-    return o.limit_price or o.reserve_price
+    """미체결 주문의 예약금 기준가. 지정가 주문만 지정가, 나머지는 접수 시 실시간 기준가.
+
+    DB 시세(prices)와 예약·시장가 주문에 딸려 온 limit_price(화면의 '예상 체결가')는 쓰지 않는다.
+    """
+    if o.order_type == "LIMIT":
+        return o.limit_price
+    return o.reserve_price
 
 
 def _reserved_by_currency(db: Session, user: User) -> tuple[Decimal, Decimal]:
@@ -192,6 +197,8 @@ async def place_order(
         raise OrderError("limit_price required for LIMIT")
     if order_type == "SCHEDULED" and not scheduled_at:
         raise OrderError("scheduled_at required for SCHEDULED")
+    if order_type != "LIMIT":
+        limit_price = None  # 체결가로 쓰지 않는 값 — 저장하면 예약금 계산을 속일 수 있다
     # 프론트가 next_open(오프셋 포함 ISO)을 보내면 tz-aware datetime이 된다.
     # naive datetime.utcnow()와 비교하면 TypeError → HTTP 500 → naive UTC로 정규화.
     if scheduled_at is not None and scheduled_at.tzinfo is not None:

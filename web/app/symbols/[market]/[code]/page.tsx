@@ -164,10 +164,7 @@ export default function SymbolPage({
         qty,
       };
       if (orderType === "LIMIT") body.limit_price = limitPrice;
-      if (orderType === "SCHEDULED") {
-        body.limit_price = limitPrice || q?.price;
-        body.scheduled_at = nextOpen;
-      }
+      if (orderType === "SCHEDULED") body.scheduled_at = nextOpen; // 개장 시 시장가 체결 — 가격은 보내지 않음
       const r = await api<any>("/orders", {
         method: "POST",
         body: JSON.stringify(body),
@@ -531,7 +528,7 @@ export default function SymbolPage({
           {(orderType === "LIMIT" || orderType === "SCHEDULED") && (
             <div>
               <label className="text-xs text-ink-3">
-                {orderType === "SCHEDULED" ? "예상 체결가 (지정가)" : "지정가"}
+                {orderType === "SCHEDULED" ? "예상 체결가 (참고용 · 개장 시 시장가로 체결)" : "지정가"}
               </label>
               <input
                 value={limitPrice}
