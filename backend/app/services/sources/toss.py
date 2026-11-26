@@ -14,6 +14,7 @@ TOSS_CLIENT_ID / TOSS_CLIENT_SECRET 미설정 시 모든 호출은 graceful None
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import json
 import os
 import time
@@ -73,39 +74,57 @@ def _write_shared_token(token: str, exp: float) -> None:
         logger.warning("Toss token share write failed: {}", e)
 
 
+_LOCK_FILE = Path("/data/toss_token.lock")
+
+
+def _issue_token_locked(rejected: str | None) -> tuple[str, float] | None:
+    """프로세스 간 파일 잠금 안에서: 공유 토큰 재확인 → 유효하면 사용, 아니면 발급 후 저장.
+
+    API·Worker가 동시에 발급해 서로의 토큰을 무효화하지 않도록 발급은 한 번에 한 프로세스만 한다.
+    막히는 호출(flock, 동기 HTTP)이므로 asyncio.to_thread로 부른다.
+    """
+    with open(_LOCK_FILE, "a") as lf:
+        fcntl.flock(lf, fcntl.LOCK_EX)
+        try:
+            now = time.time()
+            shared = _read_shared_token()
+            if shared and shared[0] != rejected and shared[1] > now + 60:
+                return shared
+            r = httpx.post(
+                f"{_base()}/oauth2/token",
+                data={
+                    "grant_type": "client_credentials",
+                    "client_id": settings.TOSS_CLIENT_ID,
+                    "client_secret": settings.TOSS_CLIENT_SECRET,
+                },
+                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                timeout=10,
+            )
+            r.raise_for_status()
+            data = r.json()
+            tok = (data["access_token"], now + int(data.get("expires_in", 3600)))
+            _write_shared_token(*tok)
+            logger.info("Toss token issued (pid {})", os.getpid())
+            return tok
+        finally:
+            fcntl.flock(lf, fcntl.LOCK_UN)
+
+
 async def get_access_token(rejected: str | None = None) -> str | None:
     """유효 토큰. rejected=401을 받은 토큰이면 그 토큰은 다시 쓰지 않는다."""
     if not _configured():
         return None
     async with _token_lock:
-        now = time.time()
         tok = _token_cache["token"]
-        if tok and tok != rejected and _token_cache["exp"] > now + 60:
+        if tok and tok != rejected and _token_cache["exp"] > time.time() + 60:
             return tok
-        shared = _read_shared_token()  # 다른 프로세스가 새로 발급했을 수 있다
-        if shared and shared[0] != rejected and shared[1] > now + 60:
-            _token_cache["token"], _token_cache["exp"] = shared
-            return shared[0]
         try:
-            async with httpx.AsyncClient(timeout=10) as c:
-                r = await c.post(
-                    f"{_base()}/oauth2/token",
-                    data={
-                        "grant_type": "client_credentials",
-                        "client_id": settings.TOSS_CLIENT_ID,
-                        "client_secret": settings.TOSS_CLIENT_SECRET,
-                    },
-                    headers={"Content-Type": "application/x-www-form-urlencoded"},
-                )
-                r.raise_for_status()
-                data = r.json()
-                _token_cache["token"] = data["access_token"]
-                _token_cache["exp"] = now + int(data.get("expires_in", 3600))
-                _write_shared_token(_token_cache["token"], _token_cache["exp"])
-                return _token_cache["token"]
+            got = await asyncio.to_thread(_issue_token_locked, rejected)
         except Exception as e:
             logger.warning("Toss token issue failed: {}", e)
             return None
+        _token_cache["token"], _token_cache["exp"] = got
+        return got[0]
 
 
 async def _auth_headers(rejected: str | None = None) -> dict | None:

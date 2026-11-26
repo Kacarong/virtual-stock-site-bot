@@ -107,15 +107,20 @@ def market_session(market: str, now: datetime | None = None) -> str | None:
 
 # --- 휴장일 ----------------------------------------------------------
 
-# (market, year) → (monotonic ts, 결과). 성공은 계속, 실패(None)는 1시간 뒤 재시도.
+# (market, year) → (monotonic ts, 결과). 결과가 묻는 날짜(ds)까지 확인돼 있으면 계속 쓰고,
+# 실패(None)했거나 확인 범위(last)를 넘는 날짜면 1시간마다 다시 조회한다
+# (국내는 pykrx가 '오늘까지'만 주므로 날짜가 지나면 범위를 넘게 된다).
 _cal_cache: dict[tuple[str, int], tuple[float, object]] = {}
 _CAL_RETRY = 3600.0
 
 
-def _cached_calendar(market: str, year: int, load):
+def _cached_calendar(market: str, year: int, ds: str, load):
     key = (market, year)
     hit = _cal_cache.get(key)
-    if hit and (hit[1] is not None or _time.monotonic() - hit[0] < _CAL_RETRY):
+    if hit and (
+        _time.monotonic() - hit[0] < _CAL_RETRY
+        or (hit[1] is not None and ds <= hit[1][1])
+    ):
         return hit[1]
     val = load(year)
     _cal_cache[key] = (_time.monotonic(), val)
@@ -178,9 +183,9 @@ def is_trading_day(market: str, day: datetime) -> bool | None:
         return False
     ds = day.strftime("%Y-%m-%d")
     if market == "KRX":
-        cal = _cached_calendar("KRX", day.year, _load_krx_calendar)
+        cal = _cached_calendar("KRX", day.year, ds, _load_krx_calendar)
     elif market in ("NASDAQ", "NYSE"):
-        cal = _cached_calendar("US", day.year, _load_us_calendar)
+        cal = _cached_calendar("US", day.year, ds, _load_us_calendar)
     else:
         return True
     if cal is None:
