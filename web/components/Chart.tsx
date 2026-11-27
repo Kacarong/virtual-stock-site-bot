@@ -31,6 +31,8 @@ type Props = {
   intervalSec?: number;
   /** 종목·봉 단위 식별자. 같으면 데이터 갱신 때 보던 확대/스크롤 위치를 유지, 바뀌면 전체 맞춤. */
   viewKey?: string;
+  /** 최근 봉 몇 개(몇 초마다 새로 받음). 마지막 봉의 OHLC·거래량을 전체 재생성 없이 갱신. */
+  tail?: Candle[];
 };
 
 export function Chart({
@@ -41,10 +43,14 @@ export function Chart({
   livePrice,
   intervalSec,
   viewKey,
+  tail,
 }: Props) {
   const ref = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
+  const volumeRef = useRef<ISeriesApi<"Histogram"> | null>(null);
+  // 가장 최근 실시간 현재가(priceScale 적용 후) — tail로 마지막 봉을 갱신할 때 종가로 씀
+  const livePriceRef = useRef<number | null>(null);
   const lastCandleRef = useRef<{
     time: any;
     open: number;
@@ -159,6 +165,7 @@ export function Chart({
     }));
     candle.setData(scaled as any);
     candleRef.current = candle;
+    volumeRef.current = null;
     lastCandleRef.current = scaled.length ? scaled[scaled.length - 1] : null;
 
     // 거래량 막대 (오버레이 — 화면 하단 25% 차지)
@@ -183,6 +190,7 @@ export function Chart({
           color: d.close >= d.open ? "#FF4D4D88" : "#3182F688",
         })) as any
       );
+      volumeRef.current = volume;
     }
 
     const saved = viewRef.current;
@@ -200,6 +208,7 @@ export function Chart({
       chart.remove();
       chartRef.current = null;
       candleRef.current = null;
+      volumeRef.current = null;
     };
   }, [data, priceScale, unitLabel, integerOnly, isDark, viewKey, intervalSec]);
 
@@ -211,6 +220,7 @@ export function Chart({
     const last = lastCandleRef.current;
     if (!c || !last) return;
     const p = livePrice * priceScale;
+    livePriceRef.current = p;
     let bucket: number | null = null;
     if (intervalSec && intervalSec < 86400) {
       // 캔들 시간이 로컬 오프셋만큼 shift돼 있으므로 버킷도 동일하게 맞춘다.
@@ -243,6 +253,46 @@ export function Chart({
       } catch {}
     }
   }, [livePrice, priceScale, intervalSec]);
+
+  // 최근 봉(tail)으로 마지막 봉과 거래량 갱신 — 현재가만으로는 거래량을 알 수 없어서.
+  // 마지막 봉보다 오래된 봉은 update할 수 없으므로 건너뛰고, 다음 전체 갱신 때 맞춰진다.
+  useEffect(() => {
+    const c = candleRef.current;
+    if (!c || !tail?.length) return;
+    const tz = -new Date().getTimezoneOffset() * 60;
+    const rows = [...tail].sort((a, b) => a.time - b.time);
+    for (let i = 0; i < rows.length; i++) {
+      const d = rows[i];
+      const last = lastCandleRef.current;
+      const t = d.time + tz;
+      if (!last || t < Number(last.time)) continue;
+      const bar = {
+        time: t as any,
+        open: d.open * priceScale,
+        high: d.high * priceScale,
+        low: d.low * priceScale,
+        close: d.close * priceScale,
+      };
+      // 진행 중인 봉은 실시간 현재가가 더 최신이므로 종가·고가·저가에 반영
+      const lp = livePriceRef.current;
+      if (i === rows.length - 1 && lp != null) {
+        bar.close = lp;
+        bar.high = Math.max(bar.high, lp);
+        bar.low = Math.min(bar.low, lp);
+      }
+      try {
+        c.update(bar);
+        lastCandleRef.current = bar;
+        if (volumeRef.current && typeof d.volume === "number" && isFinite(d.volume)) {
+          volumeRef.current.update({
+            time: t as any,
+            value: d.volume,
+            color: bar.close >= bar.open ? "#FF4D4D88" : "#3182F688",
+          });
+        }
+      } catch {}
+    }
+  }, [tail, priceScale]);
 
   return <div ref={ref} className="h-[420px] w-full" />;
 }

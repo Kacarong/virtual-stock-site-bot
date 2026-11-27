@@ -72,6 +72,16 @@ export default function SymbolPage({
     fetcher,
     { refreshInterval: tf === "1m" ? 10000 : 60000 }
   );
+  // 마지막 봉(거래량 포함)은 3초마다 따로 받아 갱신 — 실시간 분봉을 싸게 받을 수 있는
+  // 국내 분봉·코인만 (그 외 시장/봉은 위 전체 갱신 주기로만 바뀜)
+  const tailOk =
+    (market === "KRX" && (tf === "1m" || tf === "5m" || tf === "1h")) ||
+    (market === "UPBIT" && (tf === "1m" || tf === "5m" || tf === "1h" || tf === "1d"));
+  const { data: tail } = useSWR<Candle[]>(
+    tailOk ? `/market/history/${market}/${code}/tail?interval=${tf}` : null,
+    fetcher,
+    { refreshInterval: 3000 }
+  );
   const { data: hits } = useSWR<any[]>(
     `/market/search?q=${encodeURIComponent(code)}`,
     fetcher
@@ -371,6 +381,7 @@ export default function SymbolPage({
                 market === "KRX" || (isUS && showKrw && !!rate)
               }
               livePrice={price ?? undefined}
+              tail={tail}
               intervalSec={
                 tf === "1m"
                   ? 60

@@ -26,7 +26,7 @@ from ..services.industries import industries as industries_svc
 from ..services.industries import industry_label
 from ..services.market_calendar import is_market_open, next_open
 from ..services.coin_logos import coin_logos as coin_logos_svc
-from ..services.history import get_history
+from ..services.history import get_history, get_tail
 from ..services.popular import popular as popular_svc
 from ..services.quotes import get_quote
 from ..services.sources import toss as _toss
@@ -657,6 +657,14 @@ async def history(market: str, code: str, interval: str = "1d") -> list[dict]:
     if interval not in ("1d", "1h", "5m", "1m", "1w", "1mo", "all"):
         raise HTTPException(400, "interval must be 1m/5m/1h/1d/1w/1mo/all")
     return await get_history(market.upper(), code, interval)  # type: ignore
+
+
+@router.get("/history/{market}/{code}/tail")
+async def history_tail(market: str, code: str, interval: str = "1m") -> list[dict]:
+    """마지막 봉 2개 — 차트 거래량·봉 실시간 갱신용 (지원 안 하는 시장/봉이면 [])."""
+    if interval not in ("1d", "1h", "5m", "1m", "1w", "1mo", "all"):
+        raise HTTPException(400, "interval must be 1m/5m/1h/1d/1w/1mo/all")
+    return await get_tail(market.upper(), code, interval)  # type: ignore
 
 
 @router.get("/popular")

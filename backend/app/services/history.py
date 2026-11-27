@@ -19,6 +19,7 @@ from typing import Literal
 
 from loguru import logger
 
+from . import krx_minutes as _krx_min
 from .sources import kis as _kis
 from .sources import stooq as _stooq
 from .sources import toss as _toss
@@ -47,6 +48,10 @@ _MAX_HIST_CACHE = 800
 
 
 def _store_hist(key: tuple[str, str, str], now: float, rows: list[dict]) -> None:
+    market, code, interval = key
+    if market == "KRX" and interval in ("1m", "5m", "1h") and not _krx_min.is_ready(code):
+        # 국내 분봉 백필이 끝나기 전의 임시 결과(yf+Toss 혼합) → 10초 뒤엔 다시 만들게 한다
+        now -= _FRESH_TTL[interval] - 10
     _hist_cache[key] = (now, rows)
     if len(_hist_cache) > _MAX_HIST_CACHE:
         overflow = len(_hist_cache) - _MAX_HIST_CACHE
@@ -214,24 +219,6 @@ def _merge_recent(deep: list[dict], recent: list[dict]) -> list[dict]:
     return [r for r in deep if r["time"] < cut] + recent
 
 
-def _bucket_minutes(rows: list[dict], sec: int) -> list[dict]:
-    """1분봉을 sec 간격 봉으로 묶는다. 시작이 잘린 첫 봉(1분봉 범위 밖에서 시작)은 버린다."""
-    out: list[dict] = []
-    for r in rows:
-        t = r["time"] - r["time"] % sec
-        if out and out[-1]["time"] == t:
-            g = out[-1]
-            g["high"] = max(g["high"], r["high"])
-            g["low"] = min(g["low"], r["low"])
-            g["close"] = r["close"]
-            g["volume"] = (g.get("volume") or 0) + (r.get("volume") or 0)
-        else:
-            out.append({**r, "time": t})
-    if out and rows and out[0]["time"] < rows[0]["time"]:
-        out = out[1:]
-    return out
-
-
 async def _krx_history(code: str, interval: Interval) -> list[dict]:
     # 주봉/월봉/전체: 일봉 받아서 집계
     if interval in ("1w", "1mo", "all"):
@@ -257,27 +244,22 @@ async def _krx_history(code: str, interval: Interval) -> list[dict]:
             _yf_history("KRX", code, "2y", "1d"),
             min_good=250,
         )
+    # 분봉(1분/5분/1시간): Toss 1분봉 저장소(krx_minutes)가 30일치를 다 받아 두면 그것만 쓴다.
+    # yfinance는 ~20분 늦고 매일 15:00~15:30이 빠지며, 거래량이 KRX 단독이라 Toss(통합)보다
+    # ~1.4배 작아 섞으면 이어지는 지점에서 거래량 막대가 튄다. 그래서 1시간봉도 30일치만 보여준다.
+    # 백필이 끝나기 전(종목을 처음 연 뒤 10여 초)에만 yfinance 위에 Toss 최근 200분을 덮어 쓴다.
+    recent, ready = await _krx_min.bars(code, interval)
+    if ready:
+        return recent
     if interval == "1m":
-        # yfinance(7d)는 깊지만 국내 분봉이 ~20분 늦고 당일분이 통째로 빠질 때도 있다.
-        # 그래서 깊은 히스토리 위에 Toss의 최근 200분(실시간)을 덮어 최신 구간을 채운다.
-        recent, deep = await asyncio.gather(
-            _toss.fetch_candles(code, "1m", count=200),
-            _race(
-                _kis.fetch_minute_candles(code, count=200),
-                _yf_history("KRX", code, "7d", "1m"),
-                min_good=400,
-            ),
+        deep = await _race(
+            _kis.fetch_minute_candles(code, count=200),
+            _yf_history("KRX", code, "7d", "1m"),
+            min_good=400,
         )
-        return _merge_recent(deep, recent)
-    # 5분/1시간봉도 yfinance만 쓰면 ~20~30분 늦으므로, Toss 최근 1분봉을 같은 간격으로
-    # 묶어 최신 구간을 덮는다.
-    period_map = {"5m": "1mo", "1h": "1y"}
-    yf_interval = {"5m": "5m", "1h": "60m"}[interval]
-    recent1m, deep = await asyncio.gather(
-        _toss.fetch_candles(code, "1m", count=200),
-        _yf_history("KRX", code, period_map[interval], yf_interval),
-    )
-    recent = _bucket_minutes(recent1m, 300 if interval == "5m" else 3600)
+    else:
+        period, yf_interval = {"5m": ("1mo", "5m"), "1h": ("1y", "60m")}[interval]
+        deep = await _yf_history("KRX", code, period, yf_interval)
     return _merge_recent(deep, recent)
 
 
@@ -413,3 +395,29 @@ async def get_history(
     if rows:
         _store_hist(key, now, rows)
     return rows or (cached[1] if cached else [])
+
+
+# (market, code, interval) → (ts, rows) — 실시간 마지막 봉 조회용 짧은 캐시
+_tail_cache: dict[tuple[str, str, str], tuple[float, list[dict]]] = {}
+
+
+async def get_tail(market: str, code: str, interval: Interval) -> list[dict]:
+    """마지막 봉 2개(직전 봉 + 진행 중인 봉) — 차트가 거래량까지 몇 초마다 갱신하도록.
+
+    실시간 분봉을 싸게 다시 받을 수 있는 국내 분봉(Toss)과 코인(Upbit)만. 나머지는 [].
+    """
+    market = market.upper()
+    if market == "KRX" and interval in ("1m", "5m", "1h"):
+        rows, _ready = await _krx_min.bars(code, interval)
+        return rows[-2:]
+    if market == "UPBIT" and interval in ("1m", "5m", "1h", "1d"):
+        key = (market, code, interval)
+        hit = _tail_cache.get(key)
+        if hit and time.time() - hit[0] < 2.0:
+            return hit[1]
+        unit = {"1m": "1m", "5m": "5m", "1h": "60m", "1d": "1d"}[interval]
+        rows = _clean_rows(_upbit_normalize(await _upbit.fetch_candles(code, unit=unit, count=2)))
+        if rows:
+            _tail_cache[key] = (time.time(), rows)
+        return rows
+    return []
