@@ -24,7 +24,7 @@ _M1_KEEP = 7 * 86400
 _M5_KEEP = 30 * 86400
 _MAX_PAGES = 120  # 30일 ≈ 21거래일 × 720분 ≈ 76페이지
 _LATEST_TTL = 2.0  # 최신 페이지 재조회 간격(초) — 같은 종목을 여러 요청이 봐도 Toss 호출은 이 간격으로 1번
-_BACKFILL_RETRY = 300.0
+_BACKFILL_RETRY = 60.0
 _MAX_CODES = 200
 
 # 백필은 페이지 수십 개를 연달아 부르므로 전체에서 하나씩만 돌려 현재가 조회 몫을 남긴다
@@ -38,9 +38,11 @@ class _Store:
         self.known: set[str] = set()  # 첫 봉을 확인한 날
         self.late: set[str] = set()  # 10:00에 연 날
         self.latest_ts = 0.0
+        self.newest_raw = 0  # 지금까지 받은 가장 최근 1분봉 시각(정규장 필터 전)
         self.latest_task: asyncio.Task | None = None
         self.ready = False  # 30일 백필 완료
         self.backfill_ts = 0.0
+        self.bf_raw: list[dict] = []  # 백필 도중 실패하면 받은 데까지 보관했다가 이어 받는다
         self.used = 0.0
 
 
@@ -107,9 +109,31 @@ def _ingest(st: _Store, raw: list[dict]) -> None:
 
 async def _fetch_latest(code: str, st: _Store) -> None:
     rows = await _toss.fetch_candles(code, "1m", count=200)
-    if rows:
-        _ingest(st, rows)
-        st.latest_ts = time.time()
+    if not rows:
+        return
+    # 한동안 아무도 안 봐서 최신 200분 앞쪽에 못 받은 구간이 생겼으면, 받아 둔 마지막 봉까지
+    # 과거로 이어 받는다 (백필 완료 후에도 공백이 남지 않게)
+    if st.ready and st.newest_raw:
+        for _ in range(_MAX_PAGES):
+            if rows[0]["time"] <= st.newest_raw:
+                break
+            more = await _toss.fetch_candles(
+                code, "1m", count=200, before=rows[0]["time"], strict=True
+            )
+            if not more:
+                if more is None:  # 조회 실패 → 공백을 메우지 못했으니 백필부터 다시
+                    st.ready = False
+                    st.bf_raw = []
+                    st.backfill_ts = 0.0
+                break
+            rows = more + rows
+        else:
+            st.ready = False  # 30일 넘게 비었으면 다시 백필
+            st.bf_raw = []
+            st.backfill_ts = 0.0
+    _ingest(st, rows)
+    st.newest_raw = max(st.newest_raw, rows[-1]["time"])
+    st.latest_ts = time.time()
 
 
 async def _refresh_latest(code: str, st: _Store) -> None:
@@ -124,22 +148,27 @@ async def _refresh_latest(code: str, st: _Store) -> None:
 async def _backfill(code: str, st: _Store) -> None:
     async with _backfill_sem:
         cutoff = time.time() - _M5_KEEP
-        raw: list[dict] = []
-        before = None
+        raw = st.bf_raw  # 앞서 실패했으면 거기서부터 이어 받는다
         done = False
         for _ in range(_MAX_PAGES):
-            rows = await _toss.fetch_candles(code, "1m", count=200, before=before)
-            if not rows:
-                done = bool(raw)  # 첫 페이지부터 비면 실패로 보고 나중에 다시
-                break
+            before = raw[0]["time"] if raw else None
+            rows = await _toss.fetch_candles(code, "1m", count=200, before=before, strict=True)
+            if rows is None:
+                break  # 조회 실패 → 받은 데까지 보관, _BACKFILL_RETRY 뒤 이어서
+            if rows and before is not None:
+                rows = [r for r in rows if r["time"] < before]
             raw = rows + raw
-            if rows[0]["time"] <= cutoff or len(rows) < 200:
-                done = True
+            if not rows or rows[0]["time"] <= cutoff or len(rows) < 200:
+                done = bool(raw)  # 정상 응답인데 더 과거가 없음(신규 상장 등) = 끝
                 break
-            before = rows[0]["time"]
-        if raw:
-            _ingest(st, raw)
-        st.ready = done
+        if not done:
+            st.bf_raw = raw
+            return
+        st.bf_raw = []
+        # 다 받은 뒤 한 번에 넣는다 (중간에 넣으면 이어 받는 경계의 5분봉이 반쪽으로 남음)
+        _ingest(st, raw)
+        st.newest_raw = max(st.newest_raw, raw[-1]["time"])
+        st.ready = True
 
 
 def _spawn_backfill(code: str, st: _Store) -> None:

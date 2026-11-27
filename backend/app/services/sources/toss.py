@@ -292,16 +292,22 @@ def _parse_candles(res) -> list[dict]:
 
 
 async def fetch_candles(
-    code: str, interval: str = "1d", count: int = 100, before: int | None = None
-) -> list[dict]:
+    code: str,
+    interval: str = "1d",
+    count: int = 100,
+    before: int | None = None,
+    *,
+    strict: bool = False,
+) -> list[dict] | None:
     """캔들 차트. interval='1m'|'1d', 최대 200개.
 
     before: 이 시각(이 함수가 돌려주는 time 기준, epoch s) 이하의 봉만 — 과거로 페이지를 넘길 때
     이전 결과의 가장 오래된 time을 넘기면 그 바로 앞 봉부터 이어진다.
+    strict: 조회 실패(통신 오류·4xx 등)면 None — 정상 응답의 빈 목록(더 과거 데이터 없음)과 구분할 때.
     반환: [{time(epoch s), open, high, low, close, volume}] 시간 오름차순.
     """
     if not _configured():
-        return []
+        return None if strict else []
     count = max(1, min(count, 200))
     params = {"symbol": code, "interval": interval, "count": count, "adjusted": "true"}
     if before is not None:
@@ -309,6 +315,8 @@ async def fetch_candles(
         # 넘겨받은 time(봉 시작)이 곧 바로 앞 봉의 끝 시각이 된다.
         params["before"] = datetime.fromtimestamp(before, _KST).isoformat()
     res = await _authed_get("/api/v1/candles", params)
+    if res is None and strict:
+        return None
     rows = _parse_candles(res or {})
     if interval == "1m":
         # Toss 분봉 timestamp는 봉 '끝' 시각(14:27~14:28 봉 = 14:28). yfinance·Upbit·차트는
