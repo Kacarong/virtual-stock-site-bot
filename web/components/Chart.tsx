@@ -106,6 +106,8 @@ export function Chart({
         },
         priceFormatter: (p: number) => {
           if (!isFinite(p)) return "-";
+          // 거래량 영역 확보용 아래 여백 때문에 축에 음수 가격 눈금이 생기는 것을 숨김
+          if (p < 0) return "";
           let s: string;
           if (integerOnly) {
             s = Math.round(p).toLocaleString();
@@ -166,6 +168,9 @@ export function Chart({
         priceFormat: { type: "volume" },
         priceScaleId: "", // 오버레이
         color: "#3182F6",
+        // 오른쪽 축의 마지막 값 라벨은 가격 포맷("원")으로 찍혀 헷갈리므로 숨김
+        lastValueVisible: false,
+        priceLineVisible: false,
       });
       volume.priceScale().applyOptions({
         scaleMargins: { top: 0.78, bottom: 0 },
