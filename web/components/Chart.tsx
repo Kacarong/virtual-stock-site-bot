@@ -282,9 +282,13 @@ export function Chart({
         low: d.low * priceScale,
         close: d.close * priceScale,
       };
-      // 진행 중인 봉은 실시간 현재가가 더 최신이므로 종가·고가·저가에 반영
+      // 진행 중인 봉은 실시간 현재가가 더 최신이므로 종가·고가·저가에 반영.
+      // 이미 끝난 봉(장 마감 뒤 15:30 봉 등)은 덮지 않는다 — 마감 뒤 현재가는 넥스트레이드 가격이라
+      // 정규장 종가가 바뀌어 보인다.
       const lp = livePriceRef.current;
-      if (i === rows.length - 1 && lp != null) {
+      const nowShifted = Math.floor(Date.now() / 1000) + tz;
+      const inProgress = !intervalSec || t + intervalSec > nowShifted;
+      if (i === rows.length - 1 && lp != null && inProgress) {
         bar.close = lp;
         bar.high = Math.max(bar.high, lp);
         bar.low = Math.min(bar.low, lp);
@@ -301,7 +305,7 @@ export function Chart({
         }
       } catch {}
     }
-  }, [tail, priceScale]);
+  }, [tail, priceScale, intervalSec]);
 
   return <div ref={ref} className="h-[420px] w-full" />;
 }

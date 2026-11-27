@@ -70,7 +70,11 @@ export default function SymbolPage({
   const { data: candles, isLoading: candlesLoading } = useSWR<Candle[]>(
     `/market/history/${market}/${code}?interval=${tf}`,
     fetcher,
-    { refreshInterval: tf === "1m" ? 10000 : 60000 }
+    // 국내 분봉은 종목을 처음 열면 30일치를 받기 전 임시 차트가 오므로 10초마다 다시 받아 곧 바꾼다
+    {
+      refreshInterval:
+        tf === "1m" || (market === "KRX" && (tf === "5m" || tf === "1h")) ? 10000 : 60000,
+    }
   );
   // 마지막 봉(거래량 포함)은 3초마다 따로 받아 갱신 — 실시간 분봉을 싸게 받을 수 있는
   // 국내 분봉·코인만 (그 외 시장/봉은 위 전체 갱신 주기로만 바뀜)

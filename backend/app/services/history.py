@@ -45,18 +45,32 @@ _hist_cache: dict[tuple[str, str, str], tuple[float, list[dict]]] = {}
 _hist_inflight: dict[tuple[str, str, str], asyncio.Task] = {}
 # 히스토리(캔들 리스트)는 항목이 크므로 상한을 두고 오래된 것부터 제거
 _MAX_HIST_CACHE = 800
+# 국내 분봉 백필이 끝나기 전에 만든 임시 결과(yf+Toss 혼합)의 키 — 백필이 끝나면 바로 버린다
+_hist_temp: set[tuple[str, str, str]] = set()
 
 
-def _store_hist(key: tuple[str, str, str], now: float, rows: list[dict]) -> None:
+def _is_krx_minute(key: tuple[str, str, str]) -> bool:
+    return key[0] == "KRX" and key[2] in ("1m", "5m", "1h")
+
+
+def _store_hist(
+    key: tuple[str, str, str], now: float, rows: list[dict], ready_before: bool = True
+) -> None:
+    """ready_before: 조회를 시작할 때 국내 분봉 백필이 끝나 있었는지. 조회 도중에 끝났으면
+    rows는 백필 전 임시 결과일 수 있으므로 임시로 본다."""
     market, code, interval = key
-    if market == "KRX" and interval in ("1m", "5m", "1h") and not _krx_min.is_ready(code):
-        # 국내 분봉 백필이 끝나기 전의 임시 결과(yf+Toss 혼합) → 10초 뒤엔 다시 만들게 한다
+    if _is_krx_minute(key) and not (ready_before and _krx_min.is_ready(code)):
+        # 임시 결과 → 10초 뒤엔 다시 만들게 하고, 백필이 끝나면 get_history가 바로 버린다
         now -= _FRESH_TTL[interval] - 10
+        _hist_temp.add(key)
+    else:
+        _hist_temp.discard(key)
     _hist_cache[key] = (now, rows)
     if len(_hist_cache) > _MAX_HIST_CACHE:
         overflow = len(_hist_cache) - _MAX_HIST_CACHE
         for k, _ in sorted(_hist_cache.items(), key=lambda kv: kv[1][0])[:overflow]:
             _hist_cache.pop(k, None)
+            _hist_temp.discard(k)
 
 
 def _aggregate(daily: list[dict], unit: str) -> list[dict]:
@@ -347,9 +361,10 @@ def _spawn_hist_refresh(market: str, code: str, interval: Interval) -> None:
 
     async def _runner():
         try:
+            ready_before = _krx_min.is_ready(code)
             rows = await _fetch_history_uncached(market, code, interval)
             if rows:
-                _store_hist(key, time.time(), rows)
+                _store_hist(key, time.time(), rows, ready_before)
         except Exception as e:
             logger.warning("history refresh failed {} {} {}: {}", market, code, interval, e)
         finally:
@@ -375,15 +390,19 @@ async def get_history(
     now = time.time()
     cached = _hist_cache.get(key)
     fresh_ttl = _FRESH_TTL.get(interval, 300.0)
+    # 백필이 끝났는데 캐시가 그 전의 임시 결과면 내주지 않고 저장소에서 바로 다시 만든다
+    # (타임아웃 때만 임시 결과로 대신한다)
+    renew = cached and key in _hist_temp and _krx_min.is_ready(code)
 
-    if cached and now - cached[0] < fresh_ttl:
+    if cached and not renew and now - cached[0] < fresh_ttl:
         return cached[1]
 
-    if cached and now - cached[0] < _STALE_TTL:
+    if cached and not renew and now - cached[0] < _STALE_TTL:
         _spawn_hist_refresh(market, code, interval)
         return cached[1]
 
     # 캐시 없음 → 외부 호출
+    ready_before = _krx_min.is_ready(code)
     try:
         rows = await asyncio.wait_for(
             _fetch_history_uncached(market, code, interval), timeout=max_wait
@@ -393,7 +412,7 @@ async def get_history(
         return cached[1] if cached else []
 
     if rows:
-        _store_hist(key, now, rows)
+        _store_hist(key, now, rows, ready_before)
     return rows or (cached[1] if cached else [])
 
 
