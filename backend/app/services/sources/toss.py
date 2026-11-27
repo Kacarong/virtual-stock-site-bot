@@ -303,7 +303,13 @@ async def fetch_candles(code: str, interval: str = "1d", count: int = 100) -> li
         "/api/v1/candles",
         {"symbol": code, "interval": interval, "count": count, "adjusted": "true"},
     )
-    return _parse_candles(res or {})
+    rows = _parse_candles(res or {})
+    if interval == "1m":
+        # Toss 분봉 timestamp는 봉 '끝' 시각(14:27~14:28 봉 = 14:28). yfinance·Upbit·차트는
+        # 봉 '시작' 시각을 쓰므로 1분 당겨 맞춘다 (안 맞추면 합칠 때 1분씩 어긋남).
+        for r in rows:
+            r["time"] -= 60
+    return rows
 
 
 # --- 시장 지표 (지수: 코스피/코스닥 등) -----------------------------

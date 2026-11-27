@@ -201,6 +201,19 @@ async def _race(*coros, min_good: int = 1) -> list[dict]:
                 t.cancel()
 
 
+def _merge_recent(deep: list[dict], recent: list[dict]) -> list[dict]:
+    """깊은(지연) 히스토리 + 최근(실시간) 캔들. 겹치는 구간은 최근 소스를 쓴다.
+
+    깊은 쪽이 최근 쪽보다 짧으면(예: 코스닥 종목에 yf '.KS'가 하루 1봉씩만 주는 경우) 쓰지 않는다.
+    """
+    if not recent:
+        return deep
+    if len(deep) <= len(recent):
+        return recent
+    cut = min(r["time"] for r in recent)
+    return [r for r in deep if r["time"] < cut] + recent
+
+
 async def _krx_history(code: str, interval: Interval) -> list[dict]:
     # 주봉/월봉/전체: 일봉 받아서 집계
     if interval in ("1w", "1mo", "all"):
@@ -227,12 +240,17 @@ async def _krx_history(code: str, interval: Interval) -> list[dict]:
             min_good=250,
         )
     if interval == "1m":
-        return await _race(
+        # yfinance(7d)는 깊지만 국내 분봉이 ~20분 늦고 당일분이 통째로 빠질 때도 있다.
+        # 그래서 깊은 히스토리 위에 Toss의 최근 200분(실시간)을 덮어 최신 구간을 채운다.
+        recent, deep = await asyncio.gather(
             _toss.fetch_candles(code, "1m", count=200),
-            _kis.fetch_minute_candles(code, count=200),
-            _yf_history("KRX", code, "7d", "1m"),
-            min_good=400,
+            _race(
+                _kis.fetch_minute_candles(code, count=200),
+                _yf_history("KRX", code, "7d", "1m"),
+                min_good=400,
+            ),
         )
+        return _merge_recent(deep, recent)
     period_map = {"5m": "1mo", "1h": "1y"}
     yf_interval = {"5m": "5m", "1h": "60m"}[interval]
     return await _yf_history("KRX", code, period_map[interval], yf_interval)
