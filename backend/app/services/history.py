@@ -214,6 +214,24 @@ def _merge_recent(deep: list[dict], recent: list[dict]) -> list[dict]:
     return [r for r in deep if r["time"] < cut] + recent
 
 
+def _bucket_minutes(rows: list[dict], sec: int) -> list[dict]:
+    """1분봉을 sec 간격 봉으로 묶는다. 시작이 잘린 첫 봉(1분봉 범위 밖에서 시작)은 버린다."""
+    out: list[dict] = []
+    for r in rows:
+        t = r["time"] - r["time"] % sec
+        if out and out[-1]["time"] == t:
+            g = out[-1]
+            g["high"] = max(g["high"], r["high"])
+            g["low"] = min(g["low"], r["low"])
+            g["close"] = r["close"]
+            g["volume"] = (g.get("volume") or 0) + (r.get("volume") or 0)
+        else:
+            out.append({**r, "time": t})
+    if out and rows and out[0]["time"] < rows[0]["time"]:
+        out = out[1:]
+    return out
+
+
 async def _krx_history(code: str, interval: Interval) -> list[dict]:
     # 주봉/월봉/전체: 일봉 받아서 집계
     if interval in ("1w", "1mo", "all"):
@@ -251,9 +269,16 @@ async def _krx_history(code: str, interval: Interval) -> list[dict]:
             ),
         )
         return _merge_recent(deep, recent)
+    # 5분/1시간봉도 yfinance만 쓰면 ~20~30분 늦으므로, Toss 최근 1분봉을 같은 간격으로
+    # 묶어 최신 구간을 덮는다.
     period_map = {"5m": "1mo", "1h": "1y"}
     yf_interval = {"5m": "5m", "1h": "60m"}[interval]
-    return await _yf_history("KRX", code, period_map[interval], yf_interval)
+    recent1m, deep = await asyncio.gather(
+        _toss.fetch_candles(code, "1m", count=200),
+        _yf_history("KRX", code, period_map[interval], yf_interval),
+    )
+    recent = _bucket_minutes(recent1m, 300 if interval == "5m" else 3600)
+    return _merge_recent(deep, recent)
 
 
 async def _us_history(market: str, code: str, interval: Interval) -> list[dict]:
