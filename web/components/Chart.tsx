@@ -96,6 +96,14 @@ export function Chart({
         rightOffset: 3,
       },
       localization: {
+        // 십자선 시간 라벨을 한국식 "2026.11.27 14:25"로 (기본은 "27 11월 '26 14:25:00").
+        // 시간은 아래에서 "가짜 UTC = 로컬시간"으로 넣으므로 UTC 게터로 읽는다.
+        timeFormatter: (t: number) => {
+          const d = new Date(t * 1000);
+          const p2 = (n: number) => String(n).padStart(2, "0");
+          const date = `${d.getUTCFullYear()}.${p2(d.getUTCMonth() + 1)}.${p2(d.getUTCDate())}`;
+          return intervalSec ? `${date} ${p2(d.getUTCHours())}:${p2(d.getUTCMinutes())}` : date;
+        },
         priceFormatter: (p: number) => {
           if (!isFinite(p)) return "-";
           let s: string;
@@ -188,7 +196,7 @@ export function Chart({
       chartRef.current = null;
       candleRef.current = null;
     };
-  }, [data, priceScale, unitLabel, integerOnly, isDark, viewKey]);
+  }, [data, priceScale, unitLabel, integerOnly, isDark, viewKey, intervalSec]);
 
   // 실시간 현재가로 봉 갱신 (전체 재생성 없이 update만).
   // 분/5분/1시간봉이면 시간이 다음 봉으로 넘어갈 때 새 봉을 append.
