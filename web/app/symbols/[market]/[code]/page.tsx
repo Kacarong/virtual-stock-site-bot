@@ -382,6 +382,7 @@ export default function SymbolPage({
               }
               livePrice={price ?? undefined}
               tail={tail}
+              tailEnabled={tailOk}
               intervalSec={
                 tf === "1m"
                   ? 60

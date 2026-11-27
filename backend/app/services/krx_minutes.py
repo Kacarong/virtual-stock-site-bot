@@ -38,7 +38,10 @@ class _Store:
         self.known: set[str] = set()  # 첫 봉을 확인한 날
         self.late: set[str] = set()  # 10:00에 연 날
         self.latest_ts = 0.0
-        self.newest_raw = 0  # 지금까지 받은 가장 최근 1분봉 시각(정규장 필터 전)
+        # 백필 구간부터 끊김 없이 이어 받은 마지막 1분봉 시각(정규장 필터 전). 최신 조회는 여기까지
+        # 과거로 이어 받아 공백을 메우고, 이어졌을 때만 이 값을 앞으로 당긴다.
+        self.newest_raw = 0
+        self.gap = False  # newest_raw 이후 아직 못 이은 구간이 있음
         self.latest_task: asyncio.Task | None = None
         self.ready = False  # 30일 백필 완료
         self.backfill_ts = 0.0
@@ -111,9 +114,10 @@ async def _fetch_latest(code: str, st: _Store) -> None:
     rows = await _toss.fetch_candles(code, "1m", count=200)
     if not rows:
         return
-    # 한동안 아무도 안 봐서 최신 200분 앞쪽에 못 받은 구간이 생겼으면, 받아 둔 마지막 봉까지
-    # 과거로 이어 받는다 (백필 완료 후에도 공백이 남지 않게)
-    if st.ready and st.newest_raw:
+    # 최신 200분 앞쪽에 못 받은 구간이 있으면(한동안 아무도 안 봤거나 백필이 막 끝난 경우)
+    # newest_raw까지 과거로 이어 받는다. 백필 완료 여부와 상관없이 항상.
+    linked = True
+    if st.newest_raw:
         for _ in range(_MAX_PAGES):
             if rows[0]["time"] <= st.newest_raw:
                 break
@@ -121,18 +125,22 @@ async def _fetch_latest(code: str, st: _Store) -> None:
                 code, "1m", count=200, before=rows[0]["time"], strict=True
             )
             if not more:
-                if more is None:  # 조회 실패 → 공백을 메우지 못했으니 백필부터 다시
-                    st.ready = False
-                    st.bf_raw = []
-                    st.backfill_ts = 0.0
+                linked = False  # 실패·빈 응답 → 이번엔 못 이음, 다음 조회 때 다시
                 break
             rows = more + rows
         else:
-            st.ready = False  # 30일 넘게 비었으면 다시 백필
+            # 30일 넘게 비었다 → 처음부터 다시 백필
+            st.ready = False
             st.bf_raw = []
             st.backfill_ts = 0.0
+            st.newest_raw = 0
     _ingest(st, rows)
-    st.newest_raw = max(st.newest_raw, rows[-1]["time"])
+    # (위에서 await하는 사이 백필이 끝나 newest_raw가 바뀌었을 수 있으므로 지금 값으로 다시 확인)
+    if linked and (not st.newest_raw or rows[0]["time"] <= st.newest_raw):
+        st.newest_raw = max(st.newest_raw, rows[-1]["time"])
+        st.gap = False
+    else:
+        st.gap = True
     st.latest_ts = time.time()
 
 
@@ -167,7 +175,12 @@ async def _backfill(code: str, st: _Store) -> None:
         st.bf_raw = []
         # 다 받은 뒤 한 번에 넣는다 (중간에 넣으면 이어 받는 경계의 5분봉이 반쪽으로 남음)
         _ingest(st, raw)
-        st.newest_raw = max(st.newest_raw, raw[-1]["time"])
+        # 백필은 시작 시점까지만 받았으므로, 이어 받은 기준을 백필의 마지막 봉으로 되돌리고
+        # 다음 최신 조회(바로 하도록 latest_ts=0)가 거기서 지금까지 이어 받게 한다.
+        # 이어지기 전까지는 gap=True라 완료로 보지 않는다.
+        st.newest_raw = raw[-1]["time"]
+        st.gap = True
+        st.latest_ts = 0.0
         st.ready = True
 
 
@@ -190,7 +203,7 @@ def _store(code: str) -> _Store:
 
 def is_ready(code: str) -> bool:
     st = _stores.get(code)
-    return bool(st and st.ready)
+    return bool(st and st.ready and not st.gap)
 
 
 async def bars(code: str, interval: str) -> tuple[list[dict], bool]:
@@ -202,8 +215,8 @@ async def bars(code: str, interval: str) -> tuple[list[dict], bool]:
     await _refresh_latest(code, st)
     _spawn_backfill(code, st)
     if interval == "1m":
-        return [st.m1[t] for t in sorted(st.m1)], st.ready
+        return [st.m1[t] for t in sorted(st.m1)], st.ready and not st.gap
     m5 = [st.m5[t] for t in sorted(st.m5)]
     if interval == "5m":
-        return m5, st.ready
-    return bucket_minutes(m5, 3600), st.ready
+        return m5, st.ready and not st.gap
+    return bucket_minutes(m5, 3600), st.ready and not st.gap

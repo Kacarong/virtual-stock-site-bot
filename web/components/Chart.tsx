@@ -33,6 +33,8 @@ type Props = {
   viewKey?: string;
   /** 최근 봉 몇 개(몇 초마다 새로 받음). 마지막 봉의 OHLC·거래량을 전체 재생성 없이 갱신. */
   tail?: Candle[];
+  /** tail을 받는 차트인지 (응답 도착 여부와 무관). true면 새 봉은 현재가가 아니라 tail이 만든다. */
+  tailEnabled?: boolean;
 };
 
 export function Chart({
@@ -44,6 +46,7 @@ export function Chart({
   intervalSec,
   viewKey,
   tail,
+  tailEnabled = false,
 }: Props) {
   const ref = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -51,9 +54,6 @@ export function Chart({
   const volumeRef = useRef<ISeriesApi<"Histogram"> | null>(null);
   // 가장 최근 실시간 현재가(priceScale 적용 후) — tail로 마지막 봉을 갱신할 때 종가로 씀
   const livePriceRef = useRef<number | null>(null);
-  // tail을 받는 차트면 새 봉은 tail이 만든다 — 현재가로 먼저 새 봉을 만들면 그보다 오래된
-  // 직전 봉은 update할 수 없어 tail이 주는 직전 봉 확정값(OHLC·거래량)이 반영되지 않음
-  const tailActive = tail !== undefined;
   const lastCandleRef = useRef<{
     time: any;
     open: number;
@@ -236,8 +236,10 @@ export function Chart({
     // 직후(활성 거래 중, 몇 개 간격 이내)만 새 봉을 append.
     const nearby =
       bucket != null && bucket - Number(last.time) <= (intervalSec || 60) * 3;
-    if (bucket != null && bucket > Number(last.time) && tailActive) {
-      // 다음 봉으로 넘어감 — 직전 봉을 현재가로 건드리지 않고 tail(3초 이내)을 기다린다
+    if (bucket != null && bucket > Number(last.time) && tailEnabled) {
+      // 다음 봉으로 넘어감 — tail을 받는 차트면 직전 봉을 현재가로 건드리지 않고 tail을 기다린다.
+      // (현재가로 먼저 새 봉을 만들면 그보다 오래된 직전 봉은 update할 수 없어
+      //  tail이 주는 직전 봉 확정값(OHLC·거래량)이 반영되지 않음)
       return;
     }
     if (bucket != null && bucket > Number(last.time) && nearby) {
@@ -259,7 +261,7 @@ export function Chart({
         lastCandleRef.current = updated;
       } catch {}
     }
-  }, [livePrice, priceScale, intervalSec, tailActive]);
+  }, [livePrice, priceScale, intervalSec, tailEnabled]);
 
   // 최근 봉(tail)으로 마지막 봉과 거래량 갱신 — 현재가만으로는 거래량을 알 수 없어서.
   // 마지막 봉보다 오래된 봉은 update할 수 없으므로 건너뛰고, 다음 전체 갱신 때 맞춰진다.
